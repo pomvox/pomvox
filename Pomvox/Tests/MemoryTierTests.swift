@@ -55,6 +55,23 @@ final class MemoryTierTests: XCTestCase {
                        MemoryTier.standardCleanupModel)
         XCTAssertEqual(MemoryTier.firstRunCleanupModel(physicalMemoryBytes: 64 * Self.gb),
                        MemoryTier.standardCleanupModel, "8B is offered, never auto-selected")
-        XCTAssertEqual(MemoryTier.standardCleanupModel, "mlx-community/Qwen3-4B-4bit")
+        XCTAssertEqual(MemoryTier.standardCleanupModel,
+                       "abhiram3040/simplewords-dictation-cleanup-v2")
+    }
+
+    /// The 8-bit fine-tune is ~2.2 GB resident — it does not belong on the
+    /// low-memory tier, whose whole point is the ~1.4 GB compact model.
+    func testTheCompactTierIsUnaffectedByTheStandardDefault() {
+        XCTAssertEqual(MemoryTier.compactCleanupModel, "mlx-community/Qwen3-1.7B-4bit")
+        XCTAssertNotEqual(MemoryTier.compactCleanupModel, MemoryTier.standardCleanupModel)
+    }
+
+    /// The frozen-prompt path must actually engage for the shipped default —
+    /// otherwise the fine-tune runs on the few-shot prompt it was not trained on.
+    func testTheStandardDefaultUsesTheFrozenPromptProfile() {
+        XCTAssertEqual(
+            CleanupPromptProfile.forModel(MemoryTier.standardCleanupModel), .simpleWords)
+        XCTAssertEqual(
+            CleanupPromptProfile.forModel(MemoryTier.compactCleanupModel), .legacy)
     }
 }

@@ -3,7 +3,7 @@ import Foundation
 /// Memory-aware defaults for low-RAM Macs (e.g. an 8 GB MacBook).
 ///
 /// The armed native engine keeps the Parakeet STT models resident (~600 MB) and,
-/// when cleanup is on, also loads the Qwen3 cleanup LLM (~2.3 GB) — ~2.5 GB total.
+/// when cleanup is on, also loads the cleanup LLM (~2.2 GB) — ~2.5 GB total.
 /// On an 8 GB machine that risks memory pressure and swap, and GPU cleanup is the
 /// slowest path there. So on a *fresh install* (no config yet) on a low-memory
 /// Mac we default cleanup off: raw on-device dictation (~600 MB) that just works,
@@ -47,12 +47,15 @@ enum MemoryTier {
 
     /// The compact cleanup model for low-memory Macs (~1.4 GB resident).
     static let compactCleanupModel = "mlx-community/Qwen3-1.7B-4bit"
-    /// The standard cleanup model for 16 GB+ Macs (~2.3 GB resident).
-    static let standardCleanupModel = "mlx-community/Qwen3-4B-4bit"
+    /// The standard cleanup model for 16 GB+ Macs (~2.2 GB resident): the
+    /// SimpleWords dictation fine-tune, 8-bit fused. It ships its own frozen
+    /// prompt (see `CleanupPromptProfile`) and beat Qwen3-4B on a 28-case eval
+    /// with zero meaning corruptions at roughly 4x the speed.
+    static let standardCleanupModel = "abhiram3040/simplewords-dictation-cleanup-v2"
 
     /// The `[cleanup] model` default for the current machine when the key is
     /// absent: the smallest model that fits comfortably. A low-memory Mac gets
-    /// the 1.7B model; 16 GB+ gets 4B (the previous unconditional default). The
+    /// the 1.7B model; 16 GB+ gets the SimpleWords fine-tune. The
     /// 8B preset is offered in Settings but never auto-selected — it only fits
     /// higher-RAM machines, so the user opts into it explicitly.
     static func firstRunCleanupModel(physicalMemoryBytes: UInt64) -> String {
