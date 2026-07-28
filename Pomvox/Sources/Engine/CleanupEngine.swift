@@ -35,10 +35,13 @@ enum CleanupPrepareOutcome: Sendable {
 
 actor CleanupEngine: CleanupCleaning {
 
-    /// One style's static prompt prefix (system + few-shot examples, ~95% of
-    /// the prompt's tokens) and its prefilled KV cache. `KVCache` isn't
-    /// Sendable; safe here because the entry is built inside the model actor,
-    /// only read afterwards, and per-request `copy()`s never escape `perform`.
+    /// One prefix key's static prompt prefix (system + few-shot examples, ~95%
+    /// of the prompt's tokens) and its prefilled KV cache. Keyed by
+    /// `CleanupPromptProfile.prefixKey(forStyle:)`, which is the style itself
+    /// on the legacy path and one shared key on the frozen path. `KVCache`
+    /// isn't Sendable; safe here because the entry is built inside the model
+    /// actor, only read afterwards, and per-request `copy()`s never escape
+    /// `perform`.
     private final class PrefixEntry: @unchecked Sendable {
         let prefix: [Int]
         let cache: [KVCache]
@@ -66,6 +69,10 @@ actor CleanupEngine: CleanupCleaning {
     /// The configured cleanup style — its prefix builds FIRST so a dictation
     /// racing a cold-launch prepare() waits behind one useful prefill.
     private var preferredStyle = CleanupLogic.styles[0]
+    /// The prompt recipe for the loaded model. Assigned in `prepare()` from the
+    /// model id; `.legacy` until a model loads, which is also the right answer
+    /// for every model but the SimpleWords fine-tune.
+    private var profile: CleanupPromptProfile = .legacy
     /// Styles whose prefix build finished this residency (success OR failure).
     /// `clean()` stops waiting for a style once its build was attempted — a
     /// failed build means uncached generation, the sanctioned fallback.
@@ -200,17 +207,18 @@ actor CleanupEngine: CleanupCleaning {
         // last time) still re-prefills.
         let t0 = CFAbsoluteTimeGetCurrent()
         let current = PrefixCacheKey(modelID: modelID, hint: termsHint)
+        let keys = profile.prefixKeys
         let order = CleanupResidency.styleBuildOrder(
-            preferred: preferredStyle, all: CleanupLogic.styles)
-        let rebuild = prefixKey != current || prefixCaches.count < CleanupLogic.styles.count
+            preferred: profile.prefixKey(forStyle: preferredStyle), all: keys)
+        let rebuild = prefixKey != current || prefixCaches.count < keys.count
         if rebuild {
             prefixCaches = [:]
             prefixAttempted = []
-            // The configured style first, WITHOUT yielding — the racing first
-            // dictation is waiting on exactly this prefill.
+            // The configured style's prefix first, WITHOUT yielding — the
+            // racing first dictation is waiting on exactly this prefill.
             await buildPrefixCaches(Array(order.prefix(1)), yieldToCleans: false)
         } else {
-            prefixAttempted = Set(CleanupLogic.styles)
+            prefixAttempted = Set(keys)
             NSLog("cleanup: reusing retained prefix caches (same model + hint)")
         }
         do {
@@ -263,10 +271,11 @@ actor CleanupEngine: CleanupCleaning {
     /// <think> block into the final assistant turn only). A failure here is
     /// non-fatal: the style just runs uncached (M0's sanctioned fallback).
     private func buildPrefixCaches(
-        _ styles: [String] = CleanupLogic.styles, yieldToCleans: Bool = false
+        _ keys: [String]? = nil, yieldToCleans: Bool = false
     ) async {
+        let keys = keys ?? profile.prefixKeys
         let hint = termsHint
-        for style in styles {
+        for key in keys {
             if yieldToCleans {
                 while pendingCleans > 0 {
                     try? await Task.sleep(nanoseconds: 100_000_000)
@@ -276,9 +285,9 @@ actor CleanupEngine: CleanupCleaning {
             do {
                 let entry: PrefixEntry = try await container.perform { context in
                     let a = try await Self.renderTokens(
-                        context, text: "placeholder one", style: style, termsHint: hint)
+                        context, text: "placeholder one", style: key, termsHint: hint)
                     let b = try await Self.renderTokens(
-                        context, text: "a different text entirely", style: style, termsHint: hint)
+                        context, text: "a different text entirely", style: key, termsHint: hint)
                     let prefix = Array(a.prefix(CleanupLogic.commonPrefixLen(a, b)))
                     // TokenIterator prefills the prompt into the cache and
                     // samples ahead; generate one token like Python's
@@ -305,14 +314,14 @@ actor CleanupEngine: CleanupCleaning {
                     eval(cache.flatMap { $0.innerState() })
                     return PrefixEntry(prefix: prefix, cache: cache)
                 }
-                prefixCaches[style] = entry
-                NSLog("cleanup: cached %d-token prefix for style=%@", entry.prefix.count, style)
+                prefixCaches[key] = entry
+                NSLog("cleanup: cached %d-token prefix for style=%@", entry.prefix.count, key)
             } catch {
                 NSLog(
                     "cleanup: prefix cache failed for style=%@ (%@) — running uncached",
-                    style, String(describing: error))
+                    key, String(describing: error))
             }
-            prefixAttempted.insert(style)
+            prefixAttempted.insert(key)
         }
         prefixKey = PrefixCacheKey(modelID: loadedModelID ?? "", hint: hint)
     }
@@ -348,9 +357,10 @@ actor CleanupEngine: CleanupCleaning {
         // dictation burned 12.9s that way and pasted raw. Waiting for the
         // cache (while the deadline still leaves room to generate) turns that
         // into prefill-once-then-cached-gen.
+        let prefixKeyForStyle = profile.prefixKey(forStyle: style)
         while CleanupResidency.shouldAwaitStylePrefix(
-            cached: prefixCaches[style] != nil,
-            attempted: prefixAttempted.contains(style),
+            cached: prefixCaches[prefixKeyForStyle] != nil,
+            attempted: prefixAttempted.contains(prefixKeyForStyle),
             loading: preparing,
             now: CFAbsoluteTimeGetCurrent(), deadline: deadline)
         {
@@ -361,7 +371,7 @@ actor CleanupEngine: CleanupCleaning {
         // in the Python engine (ARCHITECTURE.md). Dropping the pool is cheaper;
         // the next recording re-allocates off the stop-to-text critical path.
         Memory.clearCache()
-        let cached = prefixCaches[style]
+        let cached = prefixCaches[prefixKeyForStyle]
         let hint = termsHint
 
         return try await container.perform { context in
