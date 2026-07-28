@@ -73,16 +73,28 @@ Two independent paths make the adapter subfolder load-bearing:
    home in the fused graph, and `Qwen35Model.sanitize` filters only `mtp.` keys
    and `lm_head.weight` — not LoRA keys.
 
-This is settled empirically before implementation begins, by an env-gated
-`XCTestCase` in the app target alongside `CleanupBenchTests`. It cannot be a
-`native/` SPM harness: mlx-swift's `default.metallib` is an Xcode build-phase
-artifact, so `swift run pomvox-bench-llm` dies with `Failed to load the default
-metallib` before reaching the loader — which is why `CleanupBenchTests` was
-relocated into the Xcode target in the first place.
+This was settled empirically, by an env-gated `XCTestCase`
+(`CleanupModelLoadProbeTests.testStockRepoIDPath`) in the app target alongside
+`CleanupBenchTests`. It cannot be a `native/` SPM harness: mlx-swift's
+`default.metallib` is an Xcode build-phase artifact, so `swift run
+pomvox-bench-llm` dies with `Failed to load the default metallib` before
+reaching the loader — which is why `CleanupBenchTests` was relocated into the
+Xcode target in the first place.
 
-The design below is correct either way. If the load turns out to succeed, the
-change is still needed to obtain `system_v2.txt` and to stop downloading 67 MB of
-dead weight per install.
+The stock loader does **not** survive the `adapter/` subfolder. Against a local
+Hugging Face cache that already held `adapter/adapters.safetensors`,
+`LLMModelFactory.shared.loadContainer(from:using:configuration:)` threw before
+returning a container:
+
+```
+PROBE stock: FAILED unhandledKeys(path: ["language_model", "model", "layers", "0", "linear_attn", "in_proj_qkv"], modules: ["Qwen35Model", "Qwen35TextModel", "Qwen35TextModelInner", "Qwen35DecoderLayer", "Qwen35GatedDeltaNet", "QuantizedLinear"], keys: ["lora_a", "lora_b"])
+```
+
+This confirms the mechanism above: `loadWeights` merged the adapter's LoRA
+tensors into the fused graph, and `model.update(parameters:verify: [.all])`
+rejected `lora_a`/`lora_b` as unused keys on the very first decoder layer's
+`QuantizedLinear` before even reaching layer 1. The design below is correct as
+specified.
 
 ### Download hygiene is otherwise already correct
 
