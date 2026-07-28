@@ -146,6 +146,29 @@ enum CleanupLogic {
         return messages
     }
 
+    /// Chat messages for one cleanup request on the frozen-prompt path.
+    ///
+    /// The SimpleWords fine-tune was trained with its system text folded into
+    /// the USER turn — `"{system}\n\n{raw}"` — with no system-role message and
+    /// no few-shot examples (the model repo's `example.py` is the reference).
+    /// Reproducing that shape byte-for-byte is what makes the fine-tune behave;
+    /// a system-role message or the legacy examples put it off-distribution.
+    ///
+    /// `system` is the frozen text read from the model snapshot at load, never
+    /// a copy kept in this repo — that is what stops it drifting from the
+    /// weights that were trained on it. `termsHint` (see `dictionaryPromptHint`)
+    /// is appended AFTER the frozen text: it is already shaped as one more "- "
+    /// rule, and keeping it after leaves the frozen bytes a strict prefix of
+    /// every prompt, so the prefilled KV cache still covers them.
+    static func buildSimpleWordsMessages(
+        text: String, system: String, termsHint: String = ""
+    ) -> [ChatMessage] {
+        var prompt = system.trimmingCharacters(in: .whitespacesAndNewlines)
+        let hint = termsHint.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !hint.isEmpty { prompt += "\n" + hint }
+        return [ChatMessage(role: "user", content: prompt + "\n\n" + text)]
+    }
+
     /// Length of the longest common prefix of two token sequences.
     static func commonPrefixLen(_ a: [Int], _ b: [Int]) -> Int {
         let n = min(a.count, b.count)
