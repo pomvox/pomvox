@@ -52,6 +52,23 @@ enum CleanupPromptProfile: Equatable {
         }
     }
 
+    /// Whether this profile's prompt prefix can be prefilled into a reusable
+    /// KV cache.
+    ///
+    /// `false` for the fine-tune: it is Qwen3.5, whose `newCache` hands back a
+    /// `MambaCache` for every linear-attention layer, and `ArraysCache` never
+    /// advances `offset` — so the prefill's offset check can't pass and the
+    /// layers aren't trimmable either. It doesn't matter: the frozen prompt is
+    /// ~276 tokens against the legacy path's few-shot prefix, and an uncached
+    /// cleanup measures ~0.9 s on an M1. Attempting the prefill anyway costs
+    /// ~2.8 s per residency and can never succeed.
+    var usesPrefixCache: Bool {
+        switch self {
+        case .legacy: return true
+        case .simpleWords: return false
+        }
+    }
+
     /// The prefix-cache key a configured style uses.
     ///
     /// `light` and `polish` collapse onto one key on the frozen path: the

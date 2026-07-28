@@ -142,8 +142,9 @@ actor CleanupEngine: CleanupCleaning {
     /// Hot-apply a dictionary words edit: swap the hint and, if the model is
     /// resident, rebuild the per-style prefix caches so the change takes
     /// effect on the next utterance — seconds of background prefill instead
-    /// of a full re-arm. When the model isn't loaded this just stores the
-    /// hint; the next prepare() bakes it in.
+    /// of a full re-arm. When the model isn't loaded, or its profile can't
+    /// prefill at all, this just stores the hint: the next prepare() bakes it
+    /// in, or the next render folds it in uncached.
     ///
     /// Reentrancy: the actor suspends inside buildPrefixCaches, so a second
     /// edit or the idle-eviction unload can interleave. The loop re-checks
@@ -153,6 +154,12 @@ actor CleanupEngine: CleanupCleaning {
     func updateTermsHint(_ hint: String) async {
         guard hint != termsHint else { return }
         termsHint = hint
+        // Storing the hint is the whole job on a profile that can't prefill:
+        // the next `renderTokens` folds it in uncached, and rebuilding would
+        // re-run the same doomed ~2.8 s prefill on every dictionary edit. The
+        // caller posts `.pomvoxDictionaryHintApplied` when this returns either
+        // way, so the page's "applying…" chip still clears.
+        guard profile.usesPrefixCache else { return }
         guard container != nil, !rebuildingHint else { return }
         rebuildingHint = true
         defer { rebuildingHint = false }
@@ -249,14 +256,27 @@ actor CleanupEngine: CleanupCleaning {
         // eviction) still match this model + hint — the common post-evict
         // reload — so a dictation racing this prepare() can generate cached
         // the moment the container lands. A partial cache (a key failed
-        // last time) still re-prefills.
+        // last time) still re-prefills. It is skipped entirely on a profile
+        // whose prefix can't be cached at all.
         let t0 = CFAbsoluteTimeGetCurrent()
         let current = PrefixCacheKey(modelID: modelID, hint: termsHint)
         let keys = profile.prefixKeys
         let order = CleanupResidency.styleBuildOrder(
             preferred: profile.prefixKey(forStyle: preferredStyle), all: keys)
-        let rebuild = prefixKey != current || prefixCaches.count < keys.count
-        if rebuild {
+        // A profile that can't prefill (see `usesPrefixCache`) skips the prefix
+        // machinery outright rather than burning ~2.8 s per residency on a
+        // build that cannot succeed. `prefixAttempted` is seeded with every key
+        // so `clean()`'s prefix wait short-circuits immediately instead of
+        // sitting out its deadline reserve waiting for a cache that will never
+        // arrive; the caches and their key are dropped because any leftovers
+        // belong to a different (legacy) model and are ~100 MB of dead tensors.
+        let rebuild = profile.usesPrefixCache
+            && (prefixKey != current || prefixCaches.count < keys.count)
+        if !profile.usesPrefixCache {
+            prefixCaches = [:]
+            prefixKey = nil
+            prefixAttempted = Set(keys)
+        } else if rebuild {
             prefixCaches = [:]
             prefixAttempted = []
             // The configured style's prefix first, WITHOUT yielding — the
@@ -266,6 +286,8 @@ actor CleanupEngine: CleanupCleaning {
             prefixAttempted = Set(keys)
             NSLog("cleanup: reusing retained prefix caches (same model + hint)")
         }
+        // The warmup generation runs on every path: it is also the Metal kernel
+        // compile, which the skipped prefill would otherwise have covered.
         do {
             _ = try await clean("um hello", style: preferredStyle, timeoutS: 120.0)
             NSLog("cleanup: warmup %.1fs", CFAbsoluteTimeGetCurrent() - t0)
@@ -275,8 +297,7 @@ actor CleanupEngine: CleanupCleaning {
         if rebuild {
             // Remaining prefix keys build after warmup and YIELD to any
             // dictation mid-clean, so a real generation never queues behind a
-            // prefill for a key it doesn't use. (Empty on the frozen path,
-            // which has a single shared key.)
+            // prefill for a key it doesn't use.
             await buildPrefixCaches(Array(order.dropFirst()), yieldToCleans: true)
         }
         let warmupMs = (CFAbsoluteTimeGetCurrent() - t0) * 1000

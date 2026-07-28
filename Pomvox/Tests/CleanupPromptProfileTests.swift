@@ -47,6 +47,15 @@ final class CleanupPromptProfileTests: XCTestCase {
         XCTAssertEqual(profile.prefixKeys, [profile.prefixKey(forStyle: "polish")])
     }
 
+    /// The few-shot prefix is worth prefilling; the fine-tune's cannot be
+    /// prefilled at all (Qwen3.5 hands back a `MambaCache` for its
+    /// linear-attention layers, whose offset never advances), so `prepare()`
+    /// must skip the build instead of spending ~2.8 s failing it.
+    func testOnlyTheLegacyProfileUsesThePrefixCache() {
+        XCTAssertTrue(CleanupPromptProfile.legacy.usesPrefixCache)
+        XCTAssertFalse(CleanupPromptProfile.simpleWords.usesPrefixCache)
+    }
+
     /// Every style the UI can produce must map to a key the engine will have
     /// prefilled — otherwise clean() waits on a cache that is never built.
     func testEveryConfigurableStyleMapsIntoPrefixKeys() {
