@@ -70,4 +70,23 @@ final class SettingsSchemaTests: XCTestCase {
         let c = HotkeyChoice(ptt: "fn", toggle: "fn+space", stop: "esc", cancel: "esc")
         XCTAssertFalse(SettingsSchema.hotkeyConflicts(c).isEmpty)
     }
+
+    // MARK: cleanup model presets
+
+    func testTheDefaultCleanupModelIsOfferedAsAPreset() {
+        XCTAssertEqual(
+            SettingsSchema.cleanupModelPresets.first, MemoryTier.standardCleanupModel,
+            "the shipped default should head the list the user picks from")
+    }
+
+    /// Open-source-first: swapping the default must not remove the Qwen3
+    /// options a user may already be running.
+    func testTheQwen3PresetsRemainSelectable() {
+        for id in [
+            "mlx-community/Qwen3-4B-4bit", "mlx-community/Qwen3-1.7B-4bit",
+            "mlx-community/Qwen3-8B-4bit",
+        ] {
+            XCTAssertTrue(SettingsSchema.cleanupModelPresets.contains(id), id)
+        }
+    }
 }

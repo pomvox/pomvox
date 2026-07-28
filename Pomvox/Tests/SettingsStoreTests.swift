@@ -92,4 +92,10 @@ final class SettingsStoreTests: XCTestCase {
         SettingsIO.applyAll(v, to: &doc)
         XCTAssertEqual(SettingsIO.read(doc).quickAdd, "cmd+shift+d")
     }
+
+    /// Settings must display the model the engine will actually run when
+    /// `[cleanup] model` is absent, or the panel lies about the active model.
+    func testTheDisplayedDefaultMatchesTheEngineDefault() {
+        XCTAssertEqual(SettingsValues.defaults.cleanupModel, MemoryTier.standardCleanupModel)
+    }
 }

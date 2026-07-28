@@ -47,6 +47,7 @@ enum SettingsSchema {
         "mlx-community/parakeet-tdt-0.6b-v3",
     ]
     static let cleanupModelPresets = [
+        MemoryTier.standardCleanupModel,
         "mlx-community/Qwen3-4B-4bit",
         "mlx-community/Qwen3-1.7B-4bit",
         "mlx-community/Qwen3-8B-4bit",
