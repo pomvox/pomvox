@@ -56,9 +56,10 @@ actor CleanupEngine: CleanupCleaning {
         case notTrimmable
     }
 
-    private enum FrozenPromptError: LocalizedError {
+    private enum FrozenPromptError: LocalizedError, CustomStringConvertible {
         case badRepoID(String)
         case unreadable(String)
+        case strayWeights(String)
 
         var errorDescription: String? {
             switch self {
@@ -66,8 +67,23 @@ actor CleanupEngine: CleanupCleaning {
                 return "'\(id)' is not a namespace/name Hugging Face repo id"
             case .unreadable(let path):
                 return "the model's frozen prompt is missing or empty at \(path)"
+            case .strayWeights(let path):
+                return """
+                    the shared Hugging Face cache holds a weight file Pomvox never \
+                    downloads at \(path) — some other tool (typically an unfiltered \
+                    huggingface_hub snapshot_download) wrote it into this snapshot. \
+                    mlx-swift-lm merges every .safetensors under the model directory, so \
+                    loading it would fail on unused parameter keys. Cleanup stays off \
+                    (dictation still pastes the raw transcript). Fix: delete this model's \
+                    models--… directory from the Hugging Face cache, then re-arm; Pomvox \
+                    will re-download only the files it needs.
+                    """
             }
         }
+
+        // `prepare()` surfaces load failures as `String(describing: error)`; without
+        // this that renders as `strayWeights("/…")` instead of the explanation.
+        var description: String { errorDescription ?? "cleanup model load failed" }
     }
 
     private var container: ModelContainer?
@@ -226,6 +242,13 @@ actor CleanupEngine: CleanupCleaning {
                 // unloaded rather than loaded-but-unpromptable.
                 let directory = try await Self.fetchFrozenSnapshot(
                     modelID: modelID, onProgress: onProgress)
+                // The shared cache may hold weights another tool downloaded (see
+                // `strayWeightFile`). `loadContainer` would merge them and die on
+                // unhandled LoRA keys, so fail here with a message that says what
+                // happened and how to fix it.
+                if let stray = Self.strayWeightFile(in: directory) {
+                    throw FrozenPromptError.strayWeights(stray.path)
+                }
                 frozenSystem = try Self.readFrozenPrompt(in: directory)
                 loaded = try await LLMModelFactory.shared.loadContainer(
                     from: HubClient.default,
@@ -572,9 +595,48 @@ actor CleanupEngine: CleanupCleaning {
     /// v2 repo lands an inert `adapter/adapter_config.json` (a training
     /// manifest) — but nothing in the load path reads json recursively, and
     /// excluding the adapter WEIGHTS is what keeps `loadWeights` happy.
-    private static let frozenSnapshotGlobs = [
+    ///
+    /// `CleanupEngineSnapshotGlobTests` pins that fnmatch behaviour, since the
+    /// whole frozen path rests on it. Internal, not private, so that test can
+    /// assert against the shipped patterns rather than a copy of them.
+    static let frozenSnapshotGlobs = [
         "model*.safetensors", "*.json", "*.jinja", CleanupPromptProfile.frozenPromptFilename,
     ]
+
+    /// The first `.safetensors` file in `directory` that none of
+    /// `frozenSnapshotGlobs` would have fetched, or `nil` when the snapshot holds
+    /// only weights Pomvox downloaded itself.
+    ///
+    /// The Hugging Face cache is SHARED: any other tool that snapshots this repo
+    /// without `allow_patterns` lands `adapter/adapters.safetensors` in the very
+    /// snapshot directory Pomvox loads from, and `loadWeights`
+    /// (mlx-swift-lm/Libraries/MLXLMCommon/Load.swift) enumerates it recursively,
+    /// merges every `.safetensors`, then verifies `[.all]` — so the load dies on
+    /// `unhandledKeys(["lora_a", "lora_b"])`, cleanup never comes up, and every
+    /// dictation pastes raw until the cache is purged. Detecting it here turns
+    /// that opaque dump into a message naming the file and the fix.
+    ///
+    /// Deliberately does NOT delete anything: Pomvox does not own this cache and
+    /// other tools depend on its contents. The enumeration must be recursive
+    /// because the stray file lives in a subdirectory.
+    static func strayWeightFile(in directory: URL) -> URL? {
+        let fm = FileManager.default
+        guard
+            let walker = fm.enumerator(
+                at: directory, includingPropertiesForKeys: nil,
+                options: [.skipsHiddenFiles])
+        else { return nil }
+        for case let url as URL in walker where url.pathExtension == "safetensors" {
+            let relative = url.path.hasPrefix(directory.path + "/")
+                ? String(url.path.dropFirst(directory.path.count + 1))
+                : url.lastPathComponent
+            let fetched = frozenSnapshotGlobs.contains { glob in
+                fnmatch(glob, relative, 0) == 0
+            }
+            if !fetched { return url }
+        }
+        return nil
+    }
 
     /// Download exactly the files the frozen path needs and return the snapshot
     /// directory. `downloadSnapshot` short-circuits on a complete cached

@@ -25,6 +25,19 @@ from mlx_lm.sample_utils import make_sampler
 
 REPO = "abhiram3040/simplewords-dictation-cleanup-v2"
 
+# NOT an optimization — DO NOT REMOVE. This is the same file set Pomvox's Swift
+# loader fetches (CleanupEngine.frozenSnapshotGlobs). An unfiltered
+# snapshot_download also pulls the repo's adapter/adapters.safetensors (67 MB of
+# LoRA tensors) into the SHARED Hugging Face cache snapshot directory that Pomvox
+# then loads with ModelConfiguration(directory:). mlx-swift-lm's loadWeights
+# enumerates that directory RECURSIVELY, merges every .safetensors it finds, and
+# calls update(parameters:verify: [.all]), which rejects the unused lora_a/lora_b
+# keys — so the app's cleanup prepare() fails and every dictation pastes the raw
+# transcript until someone purges the cache by hand. Running this script must not
+# break the app it validates. mlx_lm's own loader reads the weight index rather
+# than globbing recursively, so the filter does not change this script's results.
+ALLOW_PATTERNS = ["model*.safetensors", "*.json", "*.jinja", "system_v2.txt"]
+
 # ---- acceptOutput port (CleanupLogic.swift) ----
 QUOTES_OPEN = {'"', "'", "“"}; QUOTES_CLOSE = {'"', "'", "”"}
 ROLE_PREFIXES = ("assistant:", "user:", "system:"); SHORT_RAW = 15
@@ -108,7 +121,7 @@ def main():
                     help="write per-case raw/out/accepted to this path")
     opts = ap.parse_args()
 
-    path = snapshot_download(REPO)
+    path = snapshot_download(REPO, allow_patterns=ALLOW_PATTERNS)
     system = (Path(path) / "system_v2.txt").read_text().strip()
     model, tok = load(path)
     sampler = make_sampler(temp=0.0)
