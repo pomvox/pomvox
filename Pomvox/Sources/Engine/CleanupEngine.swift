@@ -457,11 +457,17 @@ actor CleanupEngine: CleanupCleaning {
         // into prefill-once-then-cached-gen.
         //
         // Snapshot the prompt recipe HERE, in the same suspension-free stretch
-        // as the container guard above: `prepare()` publishes `container`,
-        // `profile` and `frozenSystem` together without an await between them,
-        // so reading all three before the next suspension is what guarantees
-        // the recipe matches the weights. (The waits below suspend, so a
-        // reload could otherwise split the pair.)
+        // as the container guard above. `container` is what makes the pair safe
+        // to read, NOT the assignment order: `prepare()` sets `frozenSystem`
+        // *before* it awaits `loadContainer`, so for the whole load it is already
+        // the incoming model's prompt while `profile` still describes the old
+        // one — but `container` is nil across that entire window, so the guard
+        // above has already bailed. Only after the load do `container`,
+        // `loadedModelID`, `profile` and `loadGeneration` publish together with
+        // no await between them, and that is the state this reads. Anything that
+        // reorders `prepare()` must keep `container` the LAST of those to be
+        // published. (The waits below suspend, so a reload could otherwise split
+        // the pair.)
         let profile = self.profile
         let frozen = frozenSystem
         let prefixKeyForStyle = profile.prefixKey(forStyle: style)

@@ -157,9 +157,12 @@ enum CleanupLogic {
     /// `system` is the frozen text read from the model snapshot at load, never
     /// a copy kept in this repo — that is what stops it drifting from the
     /// weights that were trained on it. `termsHint` (see `dictionaryPromptHint`)
-    /// is appended AFTER the frozen text: it is already shaped as one more "- "
-    /// rule, and keeping it after leaves the frozen bytes a strict prefix of
-    /// every prompt, so the prefilled KV cache still covers them.
+    /// is appended AFTER the frozen text, for two reasons: the frozen bytes must
+    /// reach the model byte-identical to what it was trained on, which prefixing
+    /// anything would break, and the hint is already shaped as one more "- " rule,
+    /// so it reads naturally as the last of the frozen rules. (Not for cache
+    /// reuse — this path prefills no KV cache; see
+    /// `CleanupPromptProfile.usesPrefixCache`.)
     static func buildSimpleWordsMessages(
         text: String, system: String, termsHint: String = ""
     ) -> [ChatMessage] {
