@@ -5,8 +5,15 @@ import MLXLMCommon
 import MLXLMHuggingFace
 import MLXLMTokenizers
 
-/// Owns the mlx-swift-lm cleanup model (Qwen3 on the GPU; STT stays on the
-/// ANE). Port of `cleanup.py`'s `CleanupEngine`, the same model-owner split as
+/// Owns the mlx-swift-lm cleanup model (on the GPU; STT stays on the ANE). Two
+/// model families reach this actor: the legacy Qwen3 presets and the default
+/// SimpleWords fine-tune, which is a Qwen3.5. That difference is load-bearing
+/// rather than cosmetic — Qwen3.5's linear-attention layers hand back caches
+/// whose offset never advances, which is why the prompt-prefix prefill is a
+/// per-profile decision (`CleanupPromptProfile.usesPrefixCache`) and not a
+/// global.
+///
+/// Port of `cleanup.py`'s `CleanupEngine`, the same model-owner split as
 /// `Transcriber`: `prepare()` loads + warms off the hot path (toggle-on),
 /// `clean()` runs per utterance with a hard deadline. `nil` from `clean` means
 /// deadline / model-not-ready — `runCleanup` turns every failure into the raw
@@ -203,10 +210,10 @@ actor CleanupEngine: CleanupCleaning {
         NSLog("cleanup: prefix caches rebuilt for new dictionary hint")
     }
 
-    /// Download (first run, ~2.3 GB), load, and warm the model. Idempotent.
+    /// Download (first run, ~2 GB), load, and warm the model. Idempotent.
     /// Mirrors Python: a load failure leaves the engine unloaded (raw pastes,
     /// status timeout); a warmup failure still leaves it usable.
-    /// `onProgress` reports the download fraction [0, 1] while the ~2.3 GB
+    /// `onProgress` reports the download fraction [0, 1] while the ~2 GB
     /// first-run fetch is in flight, so the background load can surface a note
     /// instead of the first few dictations silently pasting raw.
     /// Returns a `CleanupPrepareOutcome` describing the cold-start breakdown
@@ -329,7 +336,7 @@ actor CleanupEngine: CleanupCleaning {
 
     /// Drop the model weights (toggle-off / idle eviction); re-arm or next use
     /// reloads. The prefix caches are deliberately KEPT: they're ~100 MB of
-    /// prompt-derived K/V tensors (vs the ~2.3 GB weights), independent of the
+    /// prompt-derived K/V tensors (vs the ~2 GB weights), independent of the
     /// container instance, and still valid for the same model + hint — which
     /// is what makes the post-eviction reload fast enough for a racing
     /// dictation's deadline. `prepare()` drops them itself when the
@@ -549,7 +556,7 @@ actor CleanupEngine: CleanupCleaning {
     /// the rule editor's suggestion chips. Empty (not nil — chips are additive,
     /// there's no error state to surface) when the model isn't resident — the
     /// editor's heuristics are the floor and this is opportunistic garnish; it
-    /// must never trigger a 2.3 GB load.
+    /// must never trigger a ~2 GB load.
     func suggestVariants(for term: String, timeoutS: Double = 8.0) async -> [String] {
         guard let container else { return [] }
         guard !Task.isCancelled else { return [] }

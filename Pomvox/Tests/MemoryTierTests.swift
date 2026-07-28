@@ -59,8 +59,9 @@ final class MemoryTierTests: XCTestCase {
                        "abhiram3040/simplewords-dictation-cleanup-v2")
     }
 
-    /// The 8-bit fine-tune is ~2.2 GB resident — it does not belong on the
-    /// low-memory tier, whose whole point is the ~1.4 GB compact model.
+    /// The 8-bit fine-tune is the larger of the two models (its footprint has not
+    /// been measured; see `MemoryTier.standardCleanupModel`) — it does not belong
+    /// on the low-memory tier, whose whole point is the ~1.4 GB compact model.
     func testTheCompactTierIsUnaffectedByTheStandardDefault() {
         XCTAssertEqual(MemoryTier.compactCleanupModel, "mlx-community/Qwen3-1.7B-4bit")
         XCTAssertNotEqual(MemoryTier.compactCleanupModel, MemoryTier.standardCleanupModel)
