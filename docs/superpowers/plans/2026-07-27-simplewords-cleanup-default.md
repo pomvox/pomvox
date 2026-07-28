@@ -16,6 +16,8 @@
 - Repo root is `~/dev/murmur`. The `~/Desktop/projects/murmur` copy is stale and not a git repo — never touch it.
 - Conventional commits; subject line under 72 chars. Commits are GPG-signed automatically (`commit.gpgsign=true`, key `E9B9CAE4F97F1BA2`). Verify with `git log -1 --pretty='%G? %s'` → must print `G`.
 - Every `xcodebuild` invocation needs `DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer`. The `xcode-select` default is CommandLineTools, which `xcodebuild` rejects.
+- Run `xcodebuild` from `~/dev/murmur/Pomvox`, not the repo root — the only `.xcodeproj` lives there, and `xcodebuild` fails immediately from the root. (Found the hard way in Task 1.)
+- Never background an `xcodebuild` run in a subagent: the process is reaped when the subagent's turn ends and the log stalls mid-resolution. Run it in the foreground with `timeout: 600000`, splitting `build-for-testing` and `test-without-building` into separate calls if one would exceed the cap. (Also found the hard way in Task 1.)
 - Build to `/tmp`, never onto an iCloud path: `-derivedDataPath /tmp/pomvox-hub-dd`.
 - Adding a new source file requires `cd Pomvox && xcodegen generate` before building — `project.yml` globs `Sources/` and `Tests/`, and the generated `.xcodeproj` is gitignored.
 - Do not modify CI configuration.
@@ -98,7 +100,7 @@ The test deliberately does not assert. Its job is to print the answer; the asser
 
 ```bash
 cd ~/dev/murmur/Pomvox && xcodegen generate
-cd ~/dev/murmur && TEST_RUNNER_POMVOX_MODEL_PROBE=1 \
+cd ~/dev/murmur/Pomvox && TEST_RUNNER_POMVOX_MODEL_PROBE=1 \
   DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
   xcodebuild test -scheme Pomvox -derivedDataPath /tmp/pomvox-hub-dd \
   -destination 'platform=macOS' \
@@ -307,7 +309,7 @@ final class CleanupPromptProfileTests: XCTestCase {
 
 ```bash
 cd ~/dev/murmur/Pomvox && xcodegen generate
-cd ~/dev/murmur && DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
+cd ~/dev/murmur/Pomvox && DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
   xcodebuild test -scheme Pomvox -derivedDataPath /tmp/pomvox-hub-dd \
   -destination 'platform=macOS' \
   -only-testing:PomvoxTests/CleanupPromptProfileTests 2>&1 | tail -20
@@ -391,7 +393,7 @@ enum CleanupPromptProfile: Equatable {
 
 ```bash
 cd ~/dev/murmur/Pomvox && xcodegen generate
-cd ~/dev/murmur && DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
+cd ~/dev/murmur/Pomvox && DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
   xcodebuild test -scheme Pomvox -derivedDataPath /tmp/pomvox-hub-dd \
   -destination 'platform=macOS' \
   -only-testing:PomvoxTests/CleanupPromptProfileTests 2>&1 | tail -20
@@ -507,7 +509,7 @@ final class CleanupSimpleWordsPromptTests: XCTestCase {
 
 ```bash
 cd ~/dev/murmur/Pomvox && xcodegen generate
-cd ~/dev/murmur && DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
+cd ~/dev/murmur/Pomvox && DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
   xcodebuild test -scheme Pomvox -derivedDataPath /tmp/pomvox-hub-dd \
   -destination 'platform=macOS' \
   -only-testing:PomvoxTests/CleanupSimpleWordsPromptTests 2>&1 | tail -20
@@ -547,7 +549,7 @@ Insert immediately after `buildMessages` (after the closing brace on line 147 of
 - [ ] **Step 4: Run both the new tests and the legacy regression suite**
 
 ```bash
-cd ~/dev/murmur && DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
+cd ~/dev/murmur/Pomvox && DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
   xcodebuild test -scheme Pomvox -derivedDataPath /tmp/pomvox-hub-dd \
   -destination 'platform=macOS' \
   -only-testing:PomvoxTests/CleanupSimpleWordsPromptTests \
@@ -642,7 +644,7 @@ Then in that loop replace `cached: prefixCaches[style] != nil` with `cached: pre
 - [ ] **Step 5: Run the full suite**
 
 ```bash
-cd ~/dev/murmur && DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
+cd ~/dev/murmur/Pomvox && DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
   xcodebuild test -scheme Pomvox -derivedDataPath /tmp/pomvox-hub-dd \
   -destination 'platform=macOS' 2>&1 | tail -25
 ```
@@ -909,7 +911,7 @@ Append inside `CleanupModelLoadProbeTests`:
 
 ```bash
 cd ~/dev/murmur/Pomvox && xcodegen generate
-cd ~/dev/murmur && TEST_RUNNER_POMVOX_MODEL_PROBE=1 \
+cd ~/dev/murmur/Pomvox && TEST_RUNNER_POMVOX_MODEL_PROBE=1 \
   DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
   xcodebuild test -scheme Pomvox -derivedDataPath /tmp/pomvox-hub-dd \
   -destination 'platform=macOS' 2>&1 | grep -E "PROBE|Test Suite|error:|failed" | tail -30
@@ -958,7 +960,7 @@ Follow whatever it says about PR content; the description below is a floor, not 
 - [ ] **Step 2: Run the whole suite one more time from clean**
 
 ```bash
-cd ~/dev/murmur && rm -rf /tmp/pomvox-hub-dd && \
+cd ~/dev/murmur/Pomvox && rm -rf /tmp/pomvox-hub-dd && \
   DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
   xcodebuild test -scheme Pomvox -derivedDataPath /tmp/pomvox-hub-dd \
   -destination 'platform=macOS' 2>&1 | tail -15
@@ -1090,7 +1092,7 @@ and add:
 - [ ] **Step 2: Run to verify failure**
 
 ```bash
-cd ~/dev/murmur && DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
+cd ~/dev/murmur/Pomvox && DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
   xcodebuild test -scheme Pomvox -derivedDataPath /tmp/pomvox-hub-dd \
   -destination 'platform=macOS' -only-testing:PomvoxTests/MemoryTierTests 2>&1 | tail -20
 ```
@@ -1116,7 +1118,7 @@ In the `firstRunCleanupModel` doc comment (lines 53-57), replace "16 GB+ gets 4B
 - [ ] **Step 4: Run to verify it passes**
 
 ```bash
-cd ~/dev/murmur && DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
+cd ~/dev/murmur/Pomvox && DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
   xcodebuild test -scheme Pomvox -derivedDataPath /tmp/pomvox-hub-dd \
   -destination 'platform=macOS' -only-testing:PomvoxTests/MemoryTierTests 2>&1 | tail -20
 ```
@@ -1181,7 +1183,7 @@ Add to `Pomvox/Tests/SettingsStoreTests.swift`:
 - [ ] **Step 2: Run to verify failure**
 
 ```bash
-cd ~/dev/murmur && DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
+cd ~/dev/murmur/Pomvox && DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
   xcodebuild test -scheme Pomvox -derivedDataPath /tmp/pomvox-hub-dd \
   -destination 'platform=macOS' -only-testing:PomvoxTests/SettingsSchemaTests \
   -only-testing:PomvoxTests/SettingsStoreTests 2>&1 | tail -20
@@ -1213,7 +1215,7 @@ Referencing the constant rather than repeating the string keeps the three declar
 - [ ] **Step 4: Run the whole suite**
 
 ```bash
-cd ~/dev/murmur && DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
+cd ~/dev/murmur/Pomvox && DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
   xcodebuild test -scheme Pomvox -derivedDataPath /tmp/pomvox-hub-dd \
   -destination 'platform=macOS' 2>&1 | tail -20
 ```
@@ -1342,7 +1344,7 @@ Release, not Debug: a Debug/self-signed swap invalidates the mic TCC grant. Expe
 
 ```bash
 cd ~/dev/murmur/Pomvox && xcodegen generate
-cd ~/dev/murmur && DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
+cd ~/dev/murmur/Pomvox && DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
   xcodebuild -scheme Pomvox -configuration Release \
   -derivedDataPath /tmp/pomvox-hub-dd build 2>&1 | tail -5
 rm -rf ~/Applications/Pomvox.app
