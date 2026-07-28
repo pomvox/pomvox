@@ -37,19 +37,23 @@ final class CleanupSimpleWordsPromptTests: XCTestCase {
         XCTAssertEqual(messages[0].content, system + "\n\num hello")
     }
 
+    /// A dictionary hint is APPENDED, never merged into or ahead of the frozen
+    /// text: the frozen bytes must reach the model byte-identical to what it was
+    /// trained on, and the hint is already shaped as one more "- " rule so it
+    /// reads as the last of the frozen rules. Asserting the whole string pins
+    /// both the byte-identity and the ordering — nothing may be inserted before
+    /// the frozen text or between it and the hint.
+    ///
+    /// (This used to be two tests, the second asserting `hasPrefix(system)` "so
+    /// the prefilled KV cache still covers them". There is no prefill on this
+    /// path — see `CleanupPromptProfile.usesPrefixCache` — and the equality below
+    /// subsumes the prefix check, so they are one test.)
     func testTermsHintFollowsTheFrozenTextAndPrecedesTheTranscript() {
         let hint = dictionaryPromptHint(["Pomvox", "Parakeet"])
         let messages = CleanupLogic.buildSimpleWordsMessages(
             text: "um hello", system: system, termsHint: hint)
         let trimmedHint = hint.trimmingCharacters(in: .whitespacesAndNewlines)
         XCTAssertEqual(messages[0].content, system + "\n" + trimmedHint + "\n\num hello")
-    }
-
-    /// The frozen bytes must stay a strict prefix of every prompt, so the
-    /// prefilled KV cache still covers them when a dictionary hint is present.
-    func testTheFrozenTextStaysAPrefixWithAHint() {
-        let messages = CleanupLogic.buildSimpleWordsMessages(
-            text: "um hello", system: system, termsHint: dictionaryPromptHint(["Pomvox"]))
         XCTAssertTrue(messages[0].content.hasPrefix(system))
     }
 

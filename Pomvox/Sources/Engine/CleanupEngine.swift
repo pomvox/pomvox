@@ -632,21 +632,22 @@ actor CleanupEngine: CleanupCleaning {
     /// Deliberately does NOT delete anything: Pomvox does not own this cache and
     /// other tools depend on its contents. The enumeration must be recursive
     /// because the stray file lives in a subdirectory.
+    /// Uses `subpathsOfDirectory(atPath:)` rather than a URL enumerator: it walks
+    /// recursively AND yields paths already relative to `directory`, which is the
+    /// form the download globs are matched against. A URL enumerator would need
+    /// the prefix stripped by hand, and it can hand back a symlink-resolved path
+    /// (`/private/var/...` for a `/var/...` base) that no longer shares that
+    /// prefix — which would silently classify a stray as fetched.
     static func strayWeightFile(in directory: URL) -> URL? {
-        let fm = FileManager.default
         guard
-            let walker = fm.enumerator(
-                at: directory, includingPropertiesForKeys: nil,
-                options: [.skipsHiddenFiles])
-        else { return nil }
-        for case let url as URL in walker where url.pathExtension == "safetensors" {
-            let relative = url.path.hasPrefix(directory.path + "/")
-                ? String(url.path.dropFirst(directory.path.count + 1))
-                : url.lastPathComponent
+            let subpaths = try? FileManager.default.subpathsOfDirectory(
+                atPath: directory.path)
+        else { return nil }  // no snapshot directory at all: not this check's problem
+        for relative in subpaths where (relative as NSString).pathExtension == "safetensors" {
             let fetched = frozenSnapshotGlobs.contains { glob in
                 fnmatch(glob, relative, 0) == 0
             }
-            if !fetched { return url }
+            if !fetched { return directory.appendingPathComponent(relative) }
         }
         return nil
     }
@@ -667,7 +668,12 @@ actor CleanupEngine: CleanupCleaning {
     }
 
     /// Read the frozen prompt out of a snapshot directory.
-    private static func readFrozenPrompt(in directory: URL) throws -> String {
+    ///
+    /// Throwing (rather than returning nil and prompting the fine-tune bare) is
+    /// the spec'd failure mode: a snapshot without the prompt leaves the engine
+    /// unloaded, so `clean()` returns nil and the raw transcript pastes. Internal
+    /// only so `CleanupFrozenPromptReadTests` can cover that path.
+    static func readFrozenPrompt(in directory: URL) throws -> String {
         let url = directory.appendingPathComponent(CleanupPromptProfile.frozenPromptFilename)
         guard let text = try? String(contentsOf: url, encoding: .utf8),
             !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
