@@ -56,13 +56,27 @@ actor CleanupEngine: CleanupCleaning {
         case notTrimmable
     }
 
+    private enum FrozenPromptError: LocalizedError {
+        case badRepoID(String)
+        case unreadable(String)
+
+        var errorDescription: String? {
+            switch self {
+            case .badRepoID(let id):
+                return "'\(id)' is not a namespace/name Hugging Face repo id"
+            case .unreadable(let path):
+                return "the model's frozen prompt is missing or empty at \(path)"
+            }
+        }
+    }
+
     private var container: ModelContainer?
     private var preparing = false
     private var prefixCaches: [String: PrefixEntry] = [:]
     /// What `prefixCaches` was built for (see `PrefixCacheKey`). The caches
     /// are retained across idle eviction, so `prepare()` re-prefills only when
     /// the model or the dictionary hint actually changed — a same-model reload
-    /// costs the ~1 s weight load, not the ~10 s two-style prefill.
+    /// costs the ~1 s weight load, not the ~10 s per-key prefill.
     private var prefixKey: PrefixCacheKey?
     /// The id of the currently/last loaded model, for keying `prefixCaches`.
     private var loadedModelID: String?
@@ -73,13 +87,23 @@ actor CleanupEngine: CleanupCleaning {
     /// model id; `.legacy` until a model loads, which is also the right answer
     /// for every model but the SimpleWords fine-tune.
     private var profile: CleanupPromptProfile = .legacy
-    /// Styles whose prefix build finished this residency (success OR failure).
-    /// `clean()` stops waiting for a style once its build was attempted — a
+
+    /// The frozen system text for `.simpleWords`, read from the model snapshot
+    /// at load. `nil` on the legacy path. Retained across idle eviction for the
+    /// same reason the prefix caches are: it belongs to the model id, not to
+    /// the container instance.
+    private var frozenSystem: String?
+
+    /// The loaded model's frozen prompt, for tests and diagnostics.
+    var frozenPrompt: String? { frozenSystem }
+
+    /// Prefix keys whose build finished this residency (success OR failure).
+    /// `clean()` stops waiting for a key once its build was attempted — a
     /// failed build means uncached generation, the sanctioned fallback.
     private var prefixAttempted: Set<String> = []
     /// Dictations currently inside `clean()`. Non-preferred prefix builds
     /// yield the serial GPU queue while this is non-zero — otherwise a
-    /// cold-launch dictation's generation queues behind a prefill for a style
+    /// cold-launch dictation's generation queues behind a prefill for a key
     /// it doesn't use (rc.1: first chunk at 15.9 s, deadline 12.5 s).
     private var pendingCleans = 0
 
@@ -176,26 +200,47 @@ actor CleanupEngine: CleanupCleaning {
         preparing = true
         defer { preparing = false }
 
+        let profile = CleanupPromptProfile.forModel(modelID)
         let loadMs: Double
         do {
             let t0 = CFAbsoluteTimeGetCurrent()
-            let loaded = try await LLMModelFactory.shared.loadContainer(
-                from: HubClient.default,
-                using: TokenizersLoader(),
-                configuration: ModelConfiguration(id: modelID),
-                progressHandler: { progress in onProgress?(progress.fractionCompleted) })
+            let loaded: ModelContainer
+            switch profile {
+            case .legacy:
+                loaded = try await LLMModelFactory.shared.loadContainer(
+                    from: HubClient.default,
+                    using: TokenizersLoader(),
+                    configuration: ModelConfiguration(id: modelID),
+                    progressHandler: { progress in onProgress?(progress.fractionCompleted) })
+                frozenSystem = nil
+            case .simpleWords:
+                // Fetch first: a snapshot without the frozen prompt is unusable,
+                // and failing before the weights load keeps the engine cleanly
+                // unloaded rather than loaded-but-unpromptable.
+                let directory = try await Self.fetchFrozenSnapshot(
+                    modelID: modelID, onProgress: onProgress)
+                frozenSystem = try Self.readFrozenPrompt(in: directory)
+                loaded = try await LLMModelFactory.shared.loadContainer(
+                    from: HubClient.default,
+                    using: TokenizersLoader(),
+                    configuration: ModelConfiguration(directory: directory),
+                    progressHandler: { progress in onProgress?(progress.fractionCompleted) })
+            }
             loadMs = (CFAbsoluteTimeGetCurrent() - t0) * 1000
-            NSLog("cleanup: loaded %@ in %.1fs", modelID, loadMs / 1000)
+            NSLog("cleanup: loaded %@ in %.1fs (prompt profile: %@)",
+                  modelID, loadMs / 1000,
+                  profile == .simpleWords ? "frozen" : "few-shot")
             container = loaded
             loadedModelID = modelID
+            self.profile = profile
             loadGeneration &+= 1
         } catch {
             NSLog("cleanup: model load FAILED: %@", String(describing: error))
             return .failed(String(describing: error))
         }
 
-        // Warmup: prefill the static prompt prefix per style (doubles as the
-        // Metal kernel compile) and run one tiny generation. A warmup failure
+        // Warmup: prefill the static prompt prefix per prefix key (doubles as
+        // the Metal kernel compile) and run one tiny generation. A warmup failure
         // is non-fatal (the model is loaded and usable), but it's timed and
         // folded into the returned span so the cold-start breakdown reflects
         // the full preparation cost.
@@ -203,7 +248,7 @@ actor CleanupEngine: CleanupCleaning {
         // The prefill is skipped when the retained caches (they survive idle
         // eviction) still match this model + hint — the common post-evict
         // reload — so a dictation racing this prepare() can generate cached
-        // the moment the container lands. A partial cache (a style failed
+        // the moment the container lands. A partial cache (a key failed
         // last time) still re-prefills.
         let t0 = CFAbsoluteTimeGetCurrent()
         let current = PrefixCacheKey(modelID: modelID, hint: termsHint)
@@ -228,9 +273,10 @@ actor CleanupEngine: CleanupCleaning {
             NSLog("cleanup: warmup failed: %@", String(describing: error))
         }
         if rebuild {
-            // Remaining styles build after warmup and YIELD to any dictation
-            // mid-clean, so a real generation never queues behind a prefill
-            // for a style it doesn't use.
+            // Remaining prefix keys build after warmup and YIELD to any
+            // dictation mid-clean, so a real generation never queues behind a
+            // prefill for a key it doesn't use. (Empty on the frozen path,
+            // which has a single shared key.)
             await buildPrefixCaches(Array(order.dropFirst()), yieldToCleans: true)
         }
         let warmupMs = (CFAbsoluteTimeGetCurrent() - t0) * 1000
@@ -263,16 +309,22 @@ actor CleanupEngine: CleanupCleaning {
         return true
     }
 
-    /// Prefill a reusable KV cache of each style's static prompt prefix.
+    /// Prefill a reusable KV cache of each prefix key's static prompt prefix.
+    /// On the legacy path a prefix key IS a style, so this is one cache per
+    /// style; on the frozen path every style shares one key and one cache.
     ///
     /// The prefix is found empirically — the longest common token prefix of
     /// two renders with different texts — because the chat template renders
     /// some messages position-dependently (e.g. Qwen3 injects an empty
     /// <think> block into the final assistant turn only). A failure here is
-    /// non-fatal: the style just runs uncached (M0's sanctioned fallback).
+    /// non-fatal: the key just runs uncached (M0's sanctioned fallback).
     private func buildPrefixCaches(
         _ keys: [String]? = nil, yieldToCleans: Bool = false
     ) async {
+        // `container.perform`'s closure is @Sendable, so hoist the actor state
+        // the renders need into locals before the loop.
+        let profile = self.profile
+        let frozen = frozenSystem
         let keys = keys ?? profile.prefixKeys
         let hint = termsHint
         for key in keys {
@@ -285,9 +337,11 @@ actor CleanupEngine: CleanupCleaning {
             do {
                 let entry: PrefixEntry = try await container.perform { context in
                     let a = try await Self.renderTokens(
-                        context, text: "placeholder one", style: key, termsHint: hint)
+                        context, text: "placeholder one", style: key, termsHint: hint,
+                        profile: profile, frozenSystem: frozen)
                     let b = try await Self.renderTokens(
-                        context, text: "a different text entirely", style: key, termsHint: hint)
+                        context, text: "a different text entirely", style: key, termsHint: hint,
+                        profile: profile, frozenSystem: frozen)
                     let prefix = Array(a.prefix(CleanupLogic.commonPrefixLen(a, b)))
                     // TokenIterator prefills the prompt into the cache and
                     // samples ahead; generate one token like Python's
@@ -357,6 +411,15 @@ actor CleanupEngine: CleanupCleaning {
         // dictation burned 12.9s that way and pasted raw. Waiting for the
         // cache (while the deadline still leaves room to generate) turns that
         // into prefill-once-then-cached-gen.
+        //
+        // Snapshot the prompt recipe HERE, in the same suspension-free stretch
+        // as the container guard above: `prepare()` publishes `container`,
+        // `profile` and `frozenSystem` together without an await between them,
+        // so reading all three before the next suspension is what guarantees
+        // the recipe matches the weights. (The waits below suspend, so a
+        // reload could otherwise split the pair.)
+        let profile = self.profile
+        let frozen = frozenSystem
         let prefixKeyForStyle = profile.prefixKey(forStyle: style)
         while CleanupResidency.shouldAwaitStylePrefix(
             cached: prefixCaches[prefixKeyForStyle] != nil,
@@ -376,7 +439,8 @@ actor CleanupEngine: CleanupCleaning {
 
         return try await container.perform { context in
             var tokens = try await Self.renderTokens(
-                context, text: text, style: style, termsHint: hint)
+                context, text: text, style: style, termsHint: hint,
+                profile: profile, frozenSystem: frozen)
             // Reuse the prefilled static prefix: feed only the suffix tokens
             // with a copy of its KV cache (the deepcopy-per-request from
             // cleanup.py — `copy()` re-materializes, later updates never touch
@@ -470,15 +534,79 @@ actor CleanupEngine: CleanupCleaning {
         return parseVariantLines(raw ?? "", term: term)
     }
 
+    /// Files to fetch for the frozen-prompt path.
+    ///
+    /// `ModelConfiguration(id:)` cannot be used here, for two reasons. Its
+    /// globs (`*.safetensors`, `*.json`, `*.jinja`) never fetch `system_v2.txt`,
+    /// so the frozen prompt would never reach disk. And the snapshot filter is
+    /// `fnmatch(glob, path, 0)` — with flags 0, `*` crosses `/`, so
+    /// `*.safetensors` also matches a repo's `adapter/adapters.safetensors`,
+    /// which `loadWeights` then merges (it enumerates the model directory
+    /// RECURSIVELY) into a fused graph that has no LoRA parameters, failing
+    /// `update(parameters:verify: [.all])`.
+    ///
+    /// So: `model*.safetensors` cannot match a subfolder's adapter weights,
+    /// while `*.json` stays broad enough that a future `generation_config.json`
+    /// isn't silently dropped. `*.json` does still cross '/' — a snapshot of the
+    /// v2 repo lands an inert `adapter/adapter_config.json` (a training
+    /// manifest) — but nothing in the load path reads json recursively, and
+    /// excluding the adapter WEIGHTS is what keeps `loadWeights` happy.
+    private static let frozenSnapshotGlobs = [
+        "model*.safetensors", "*.json", "*.jinja", CleanupPromptProfile.frozenPromptFilename,
+    ]
+
+    /// Download exactly the files the frozen path needs and return the snapshot
+    /// directory. `downloadSnapshot` short-circuits on a complete cached
+    /// snapshot and falls back to the cache when the remote listing fails, so
+    /// this is no more network-dependent than the stock loader.
+    private static func fetchFrozenSnapshot(
+        modelID: String, onProgress: (@Sendable (Double) -> Void)?
+    ) async throws -> URL {
+        guard let repo = Repo.ID(rawValue: modelID) else {
+            throw FrozenPromptError.badRepoID(modelID)
+        }
+        return try await HubClient.default.downloadSnapshot(
+            of: repo, matching: frozenSnapshotGlobs,
+            progressHandler: { progress in onProgress?(progress.fractionCompleted) })
+    }
+
+    /// Read the frozen prompt out of a snapshot directory.
+    private static func readFrozenPrompt(in directory: URL) throws -> String {
+        let url = directory.appendingPathComponent(CleanupPromptProfile.frozenPromptFilename)
+        guard let text = try? String(contentsOf: url, encoding: .utf8),
+            !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        else {
+            throw FrozenPromptError.unreadable(url.path)
+        }
+        return text
+    }
+
     /// Tokenize one cleanup request through the model's chat template.
     /// Qwen3 is a hybrid-thinking model: without enable_thinking=false it
-    /// emits <think> blocks and blows the latency budget.
+    /// emits <think> blocks and blows the latency budget. The SimpleWords
+    /// fine-tune inherits the same template and the same requirement.
     private static func renderTokens(
-        _ context: ModelContext, text: String, style: String, termsHint: String
+        _ context: ModelContext, text: String, style: String, termsHint: String,
+        profile: CleanupPromptProfile, frozenSystem: String?
     ) async throws -> [Int] {
-        let chat = toChat(CleanupLogic.buildMessages(text: text, style: style, termsHint: termsHint))
+        let messages: [ChatMessage]
+        switch profile {
+        case .legacy:
+            messages = CleanupLogic.buildMessages(
+                text: text, style: style, termsHint: termsHint)
+        case .simpleWords:
+            // prepare() cannot leave the container loaded without this, but
+            // throwing beats silently prompting the fine-tune with bare text:
+            // runCleanup turns the throw into a raw paste.
+            guard let frozenSystem else {
+                throw FrozenPromptError.unreadable("<not loaded>")
+            }
+            messages = CleanupLogic.buildSimpleWordsMessages(
+                text: text, system: frozenSystem, termsHint: termsHint)
+        }
         let lmInput = try await context.processor.prepare(
-            input: UserInput(chat: chat, additionalContext: ["enable_thinking": false]))
+            input: UserInput(
+                chat: toChat(messages), additionalContext: ["enable_thinking": false]))
         return lmInput.text.tokens.asArray(Int.self)
     }
 

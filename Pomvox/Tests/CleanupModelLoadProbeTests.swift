@@ -43,4 +43,35 @@ final class CleanupModelLoadProbeTests: XCTestCase {
             print("PROBE stock: FAILED \(error)")
         }
     }
+
+    /// The path Pomvox actually ships: an explicit snapshot fetch that includes
+    /// the frozen prompt and excludes the adapter weights, then a
+    /// directory-based load. Asserts, unlike the stock-path diagnostic above.
+    ///
+    /// Run this BEFORE `testStockRepoIDPath` on a cold cache (alphabetical
+    /// order does that): the stock globs pull `adapter/adapters.safetensors`
+    /// into the shared snapshot directory, and `loadWeights` enumerates that
+    /// directory recursively — so the stock probe poisons this path's snapshot
+    /// until the adapter folder leaves the repo's main branch.
+    func testFrozenPathLoadsAndCarriesThePrompt() async throws {
+        try skipUnlessEnabled()
+        let engine = CleanupEngine()
+        let outcome = await engine.prepare(modelID: Self.modelID)
+        if case .failed(let reason) = outcome { XCTFail("prepare failed: \(reason)") }
+        let loaded = await engine.isLoaded
+        XCTAssertTrue(loaded, "the frozen model should be resident after prepare()")
+
+        let prompt = await engine.frozenPrompt
+        XCTAssertNotNil(prompt, "system_v2.txt should have been read from the snapshot")
+        XCTAssertFalse(prompt?.isEmpty ?? true)
+
+        // A cleanup the fine-tune is specifically trained for: a spoken
+        // self-correction must keep only the revision.
+        let cleaned = try await engine.clean(
+            "let's meet on tuesday wait no friday at noon", style: "polish", timeoutS: 30)
+        print("PROBE frozen: \(String(describing: cleaned))")
+        let accepted = try XCTUnwrap(cleaned).lowercased()
+        XCTAssertTrue(accepted.contains("friday"), accepted)
+        XCTAssertFalse(accepted.contains("tuesday"), accepted)
+    }
 }
