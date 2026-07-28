@@ -208,7 +208,7 @@ let loaded = try await LLMModelFactory.shared.loadContainer(
 fall back to the legacy few-shot prompt on fused weights — that combination is
 untested and the guards would not reliably catch its output.
 
-### 4. Prefix cache: one entry instead of two
+### 4. Prefix cache: keyed by profile, and skipped entirely on the frozen path
 
 `prepare()` and `buildPrefixCaches` switch from `CleanupLogic.styles` to
 `profile.prefixKeys`; `clean()` looks up
@@ -216,9 +216,39 @@ untested and the guards would not reliably catch its output.
 `CleanupResidency.styleBuildOrder(preferred:all:)` are reused as-is, with
 `all: profile.prefixKeys` and `preferred: profile.prefixKey(forStyle: preferredStyle)`.
 
-For the v2 model this means one prefill instead of two, and the prefix itself
-drops from roughly 1100 tokens to roughly 330 (the frozen prompt carries no
-few-shot block) — a large cold-launch win on top of halving the count.
+**Corrected 2026-07-27 by on-device measurement.** This section originally claimed
+the frozen path would prefill one shared prefix instead of two, "halving the
+cold-launch prefill". That is wrong, and the implementation disproved it: the
+fine-tune is **Qwen3.5**, not Qwen3. `Qwen35Model.newCache`
+(`mlx-swift-lm/Libraries/MLXLLM/Models/Qwen35.swift:582-584`) returns a
+`MambaCache` for every linear-attention layer, and `MambaCache: ArraysCache`
+never advances `offset` — so the prefill's `unexpectedOffset` guard can never
+pass, and `cache.allSatisfy { $0.isTrimmable }` would fail regardless. Observed:
+
+```
+cleanup: prefix cache failed for style=* (unexpectedOffset(got: 0, want: 256)) — running uncached
+cleanup: gen 0.91s prefill=276tok@252tps decode=8tok@26.2tps cached=no
+```
+
+So `CleanupPromptProfile` gains `var usesPrefixCache: Bool` — `true` for
+`.legacy`, `false` for `.simpleWords` — and `prepare()` skips the prefill
+entirely on the frozen path, seeding `prefixAttempted` with every key so
+`clean()` never waits on a cache that will not arrive. `updateTermsHint` skips
+the rebuild for the same reason.
+
+This costs nothing and is why: the prefix cache is mandatory for the legacy
+path's few-shot prefix (see the repo's prefix-KV-cache ADR — uncached prefill
+there would blow the whole budget), but the frozen prompt is **276 tokens** and
+prefills at ~252 tok/s, so a complete uncached cleanup measures **0.91 s**
+against a 5 s deadline. Attempting the doomed prefill anyway cost ~2.8 s on
+every residency, repeating forever — the failed build left `prefixCaches` empty,
+so `prefixCaches.count < keys.count` kept `rebuild == true` on every
+idle-evict reload.
+
+`prefixKeys` still returns `["*"]` on the frozen path rather than `[]`: the key
+is what `prefixAttempted` is seeded with, and keeping it non-empty means
+`clean()`'s wait predicate short-circuits on "already attempted" rather than on
+an empty-set edge case.
 
 The `[cleanup] style` setting therefore becomes a no-op for users on the default
 model. It keeps working for anyone on a Qwen3 preset. No UI change in this work;

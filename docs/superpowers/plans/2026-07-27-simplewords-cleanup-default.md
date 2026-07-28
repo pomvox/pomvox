@@ -1014,8 +1014,24 @@ PROBE_RESULT_PLACEHOLDER
 
 Prefix KV caches are now keyed by profile key rather than style. On the legacy
 path that is the style, unchanged. On the frozen path both `light` and `polish`
-collapse onto one key: one prefill instead of two, and the prefix itself drops
-from ~1100 tokens to ~330 because there is no few-shot block.
+collapse onto one key — and then the prefill is skipped altogether.
+
+The fine-tune is Qwen3.5, not Qwen3. `Qwen35Model.newCache` returns a
+`MambaCache` for every linear-attention layer, and `MambaCache: ArraysCache`
+never advances `offset`, so the prefill's offset guard can never pass:
+
+```
+cleanup: prefix cache failed for style=* (unexpectedOffset(got: 0, want: 256)) — running uncached
+cleanup: gen 0.91s prefill=276tok@252tps decode=8tok@26.2tps cached=no
+```
+
+It doesn't matter, and that is the interesting part. The prefix cache is
+mandatory for the legacy few-shot prefix, but the frozen prompt is **276 tokens**
+at ~252 tok/s, so a full uncached cleanup measures **0.91 s** against a 5 s
+deadline. So `CleanupPromptProfile.usesPrefixCache` is `false` on the frozen
+path and `prepare()` skips the prefill — which also removes ~2.8 s of doomed
+prefill per residency, repeating on every idle-evict reload because the failed
+build left the cache empty and `rebuild` permanently true.
 
 Consequence: `[cleanup] style` becomes a no-op for anyone on the fine-tune. It
 still works on the Qwen3 presets. Flagging as a UX follow-up rather than
