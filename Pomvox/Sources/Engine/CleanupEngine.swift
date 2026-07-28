@@ -471,10 +471,12 @@ actor CleanupEngine: CleanupCleaning {
         // one — but `container` is nil across that entire window, so the guard
         // above has already bailed. Only after the load do `container`,
         // `loadedModelID`, `profile` and `loadGeneration` publish together with
-        // no await between them, and that is the state this reads. Anything that
-        // reorders `prepare()` must keep `container` the LAST of those to be
-        // published. (The waits below suspend, so a reload could otherwise split
-        // the pair.)
+        // no await between them, and that is the state this reads. Anything
+        // that reorders `prepare()` must preserve that: keep all four
+        // assignments in one suspension-free stretch, with no `await` among
+        // them, so a `clean()` reading them sees either all-old or all-new —
+        // never a mix. (The waits below suspend, so a reload could otherwise
+        // split the pair.)
         let profile = self.profile
         let frozen = frozenSystem
         let prefixKeyForStyle = profile.prefixKey(forStyle: style)
