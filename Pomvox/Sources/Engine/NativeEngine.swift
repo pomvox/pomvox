@@ -81,7 +81,9 @@ final class NativeEngine: ObservableObject {
     private var cleanupEnabled = true
     private var cleanupStyle = "polish"
     private var cleanupTimeoutS = 5.0
-    private var cleanupModelID = "mlx-community/Qwen3-4B-4bit"
+    // Placeholder only — loadEngineConfig() unconditionally overwrites this
+    // before first use with the memory-tiered default or the config value.
+    private var cleanupModelID = MemoryTier.standardCleanupModel
 
     // Cleanup LLM residency (items 4 & 5): STT loads eagerly at arm; the ~2.3 GB
     // cleanup model does NOT — it loads on first use or after `preloadDelayS`,
@@ -661,9 +663,10 @@ final class NativeEngine: ObservableObject {
         }
         cleanupStyle = doc.string("cleanup", "style") ?? "polish"
         cleanupTimeoutS = doc.double("cleanup", "timeout_s") ?? 5.0
-        // Item 6: memory-aware model-size default (1.7B on ≤8 GB, 4B on 16 GB+)
-        // when no explicit [cleanup] model key. Keyed on the memory tier, not on
-        // config-file existence, so the compact model survives a re-arm.
+        // Item 6: memory-aware model-size default (1.7B on ≤8 GB, the
+        // SimpleWords fine-tune on 16 GB+) when no explicit [cleanup] model
+        // key. Keyed on the memory tier, not on config-file existence, so the
+        // compact model survives a re-arm.
         cleanupModelID = doc.string("cleanup", "model")
             ?? MemoryTier.firstRunCleanupModel(physicalMemoryBytes: physicalMemory)
         // Residency tuning (items 4 & 5): how long after arm to preload cleanup
