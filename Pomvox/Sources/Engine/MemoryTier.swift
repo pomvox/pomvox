@@ -3,7 +3,9 @@ import Foundation
 /// Memory-aware defaults for low-RAM Macs (e.g. an 8 GB MacBook).
 ///
 /// The armed native engine keeps the Parakeet STT models resident (~600 MB) and,
-/// when cleanup is on, also loads the Qwen3 cleanup LLM (~2.3 GB) — ~2.5 GB total.
+/// when cleanup is on, also loads the cleanup LLM, which runs ~1.4 GB
+/// (Qwen3-1.7B-4bit) to ~2.3 GB (Qwen3-4B-4bit) depending on the configured
+/// model — call it ~2-3 GB armed in total.
 /// On an 8 GB machine that risks memory pressure and swap, and GPU cleanup is the
 /// slowest path there. So on a *fresh install* (no config yet) on a low-memory
 /// Mac we default cleanup off: raw on-device dictation (~600 MB) that just works,
@@ -28,7 +30,7 @@ enum MemoryTier {
     /// - A low-memory Mac defaults to `false` *until the one-time low-memory
     ///   prompt has been answered* (`lowMemPrompted`), then follows the normal
     ///   `true` default — the off default only exists to avoid surprising a
-    ///   low-memory user with the ~2.3 GB load before they've been asked.
+    ///   low-memory user with a multi-GB model load before they've been asked.
     ///
     /// Keyed on prompt state, deliberately **not** on config-file existence: the
     /// engine writes `config.toml` via `persist(true)` at the end of every
@@ -47,12 +49,26 @@ enum MemoryTier {
 
     /// The compact cleanup model for low-memory Macs (~1.4 GB resident).
     static let compactCleanupModel = "mlx-community/Qwen3-1.7B-4bit"
-    /// The standard cleanup model for 16 GB+ Macs (~2.3 GB resident).
-    static let standardCleanupModel = "mlx-community/Qwen3-4B-4bit"
+    /// The standard cleanup model for 16 GB+ Macs: the SimpleWords dictation
+    /// fine-tune, 8-bit fused. It ships its own frozen prompt (see
+    /// `CleanupPromptProfile`).
+    ///
+    /// What is measured: `scripts/eval_cleanup_v2.py` scored 24/28 on the 28-case
+    /// ship gate (2026-07-27) with zero self-correction inversions — the failure
+    /// mode that disqualified v1 — and zero guard rejections on ordinary speech.
+    ///
+    /// What is NOT measured, and must not be claimed until it is: its resident
+    /// footprint (the only recorded figure, 1.9 GB, is the on-disk snapshot size,
+    /// which is not a footprint — no `vmmap` reading has been taken), and any
+    /// speed or quality ratio against Qwen3-4B. The committed harness hardcodes
+    /// this repo and the frozen recipe, so it structurally cannot produce a
+    /// Qwen3-4B baseline to compare against. Per CONTRIBUTING.md, a latency claim
+    /// here needs an on-device number behind it.
+    static let standardCleanupModel = "abhiram3040/simplewords-dictation-cleanup-v2"
 
     /// The `[cleanup] model` default for the current machine when the key is
     /// absent: the smallest model that fits comfortably. A low-memory Mac gets
-    /// the 1.7B model; 16 GB+ gets 4B (the previous unconditional default). The
+    /// the 1.7B model; 16 GB+ gets the SimpleWords fine-tune. The
     /// 8B preset is offered in Settings but never auto-selected — it only fits
     /// higher-RAM machines, so the user opts into it explicitly.
     static func firstRunCleanupModel(physicalMemoryBytes: UInt64) -> String {

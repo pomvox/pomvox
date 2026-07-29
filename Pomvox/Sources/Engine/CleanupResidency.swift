@@ -1,9 +1,11 @@
 import Foundation
 
-/// Idle-eviction policy for the cleanup LLM (item 5). The ~2.3 GB Qwen model is
-/// used in bursts, so it shouldn't sit resident 24/7: after it goes unused for
-/// `idleEvictS`, unload it and reload on next use. The small (~600 MB) STT model
-/// stays resident — this policy is cleanup-only.
+/// Idle-eviction policy for the cleanup LLM (item 5). The cleanup model — a
+/// GB-scale load (currently abhiram3040/simplewords-dictation-cleanup-v2, a
+/// Qwen3.5 fine-tune, ~2 GB) — is used in bursts, so it shouldn't sit resident
+/// 24/7: after it goes unused for `idleEvictS`, unload it and reload on next
+/// use. The small (~600 MB) STT model stays resident — this policy is
+/// cleanup-only.
 ///
 /// Pure decision logic (last-use + now → evict?) so the timer wiring in
 /// `NativeEngine` stays a thin shell and the boundary is unit-tested.
@@ -91,8 +93,9 @@ enum CleanupResidency {
 
 /// Identity of the prompt-prefix KV caches: valid for exactly one (model,
 /// dictionary-hint) pair. The caches are pure K/V tensors (~100 MB) derived
-/// from the prompt bytes, so they survive idle eviction of the ~2.3 GB
-/// weights and stay valid across a reload of the SAME model — a mismatch on
+/// from the prompt bytes, so they survive idle eviction of the cleanup
+/// model's GB-scale weights (currently abhiram3040/simplewords-dictation-cleanup-v2,
+/// ~2 GB) and stay valid across a reload of the SAME model — a mismatch on
 /// either field means the next `prepare()` must re-prefill.
 struct PrefixCacheKey: Equatable {
     let modelID: String

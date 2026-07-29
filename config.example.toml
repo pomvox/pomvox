@@ -24,21 +24,31 @@ quick_add = ""       # chord like "cmd+shift+d"; empty = disabled; needs at
 model = "mlx-community/parakeet-tdt-0.6b-v2"
 
 [cleanup]
-# LLM cleanup adds ~2.3 GB while armed. On a fresh install on a low-memory Mac
+# LLM cleanup adds ~2.3 GB while armed (this file documents the Python
+# reference engine's default, mlx-community/Qwen3-4B-4bit; the native app's
+# default is a smaller fine-tune, ~2 GB). On a fresh install on a low-memory Mac
 # (<= 8 GB, e.g. an 8 GB MacBook) the native engine defaults this to off so raw
 # dictation works without swapping, and the Hub shows a one-time prompt so you
 # can turn it on knowing the tradeoff — set it here to override. Existing configs
 # are never changed automatically.
 enabled = true
 # Cleanup model. A fresh install picks a size that fits your Mac's RAM: the
-# compact Qwen3-1.7B-4bit on <= 8 GB machines, Qwen3-4B-4bit on 16 GB+. The
-# larger Qwen3-8B-4bit is available but only sensible on higher-RAM machines.
+# compact Qwen3-1.7B-4bit on <= 8 GB machines, a larger model on 16 GB+. The
+# Qwen3-8B-4bit preset is available but only sensible on higher-RAM machines.
+#
+# The 16 GB+ default differs between the two engines. The native (Swift) app —
+# what you run day to day — defaults to abhiram3040/simplewords-dictation-cleanup-v2,
+# a dictation-cleanup fine-tune that ships its own frozen prompt. This file
+# documents the *Python reference engine*, which has no frozen-prompt path and so
+# keeps a general instruction-tuned model as its 16 GB+ default. Either value is
+# accepted by either engine; only the default differs.
 model = "mlx-community/Qwen3-4B-4bit"
 style = "polish"  # "light" = fillers/punctuation only; "polish" also smooths rambles
 timeout_s = 5.0   # hard deadline; on timeout the raw transcript is inserted
 # Cleanup loads lazily so it never blocks startup: STT (small, always used)
-# loads eagerly, but the ~2.3 GB cleanup LLM loads on first use or this many
-# seconds after arm — whichever comes first (0 = only on first use).
+# loads eagerly, but the ~2.3 GB Python-engine cleanup LLM (the native app's
+# default is smaller, ~2 GB) loads on first use or this many seconds after
+# arm — whichever comes first (0 = only on first use).
 preload_delay_s = 20.0
 # Evict the cleanup LLM from memory after this many idle seconds; it reloads on
 # next use so it isn't resident 24/7 for bursty use (0 = never evict).

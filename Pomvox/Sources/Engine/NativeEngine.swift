@@ -15,7 +15,7 @@ extension Notification.Name {
 /// HUD with two-tone streaming drafts (incremental re-transcription on a ~1 s
 /// cadence — M0 Result 2), a waveform and a VAD silence arc, hands-free mode
 /// (Fn+Space), energy-based auto-stop, and Esc-cancel. M6 wires in the cleanup
-/// LLM: STT stays on the ANE, Qwen3 cleanup runs on the now-free GPU between
+/// LLM: STT stays on the ANE, LLM cleanup runs on the now-free GPU between
 /// transcribe and paste when `[cleanup] enabled`, falling back to the raw
 /// transcript on timeout/rejection/error — the raw <300 ms paste path is
 /// untouched when cleanup is off. Mutual exclusion with the Python engine is
@@ -81,9 +81,11 @@ final class NativeEngine: ObservableObject {
     private var cleanupEnabled = true
     private var cleanupStyle = "polish"
     private var cleanupTimeoutS = 5.0
-    private var cleanupModelID = "mlx-community/Qwen3-4B-4bit"
+    // Placeholder only — loadEngineConfig() unconditionally overwrites this
+    // before first use with the memory-tiered default or the config value.
+    private var cleanupModelID = MemoryTier.standardCleanupModel
 
-    // Cleanup LLM residency (items 4 & 5): STT loads eagerly at arm; the ~2.3 GB
+    // Cleanup LLM residency (items 4 & 5): STT loads eagerly at arm; the ~2 GB
     // cleanup model does NOT — it loads on first use or after `preloadDelayS`,
     // and is evicted after `idleEvictS` unused (reloads on next use). The hint
     // is snapshotted at arm and applied just before the deferred load so it
@@ -305,7 +307,7 @@ final class NativeEngine: ObservableObject {
         // actually happens rather than blocking arm.
         emitColdStart(cold)
 
-        // Lazy cleanup residency (items 4 & 5): don't load the ~2.3 GB LLM at
+        // Lazy cleanup residency (items 4 & 5): don't load the ~2 GB LLM at
         // arm. Snapshot the prompt hint now (it rides inside the cached prefix),
         // schedule a background preload after a short delay, and start the
         // idle-eviction watchdog. First real use also triggers a load.
@@ -372,7 +374,7 @@ final class NativeEngine: ObservableObject {
     ///
     /// Returns immediately: the only work done synchronously on the caller's
     /// actor is the cheap guard and spawning `cleanupLoadTask`; every heavy step
-    /// (the ~2.3 GB `cleanup.prepare()` load + warmup) runs inside that detached
+    /// (the ~2 GB `cleanup.prepare()` load + warmup) runs inside that detached
     /// Task on the cleanup actor. So `arm()` — including the fresh-install
     /// onboarding warm that calls this eagerly — never waits on it: arm→ready
     /// stays fast whether cleanup warms now or lazily.
@@ -437,7 +439,7 @@ final class NativeEngine: ObservableObject {
             await MainActor.run {
                 guard let self else { return }
                 // If this load's Task was cancelled (disarm/teardown) or the
-                // session otherwise ended while the ~2.3 GB load was in flight,
+                // session otherwise ended while the ~2 GB load was in flight,
                 // drop the completion entirely: it must not emit telemetry,
                 // persist the onboarding flag, or clobber a subsequent re-arm's
                 // fresh load token. Cancellation is cooperative (prepare() does
@@ -448,7 +450,7 @@ final class NativeEngine: ObservableObject {
                 switch outcome {
                 case .loaded:
                     // The idle-evict clock starts when the load actually
-                    // completes, so a slow (~2.3 GB first-run) load isn't
+                    // completes, so a slow (~2 GB first-run) load isn't
                     // counted as idle time against the model.
                     self.cleanupLoadedAt = CFAbsoluteTimeGetCurrent()
                     // The eager onboarding warm (if any) succeeded — record it
@@ -553,7 +555,7 @@ final class NativeEngine: ObservableObject {
         capture.stop()
         capture.onBlock = nil
         // Unlike the ~600 MB Parakeet models (kept for fast re-arm), the
-        // ~2.3 GB cleanup LLM is dropped on toggle-off; re-arm reloads in ~1.5s.
+        // ~2 GB cleanup LLM is dropped on toggle-off; re-arm reloads in ~1.5s.
         stopCleanupResidency()
         Task { [cleanup] in await cleanup.unload() }
         bus.post(.state("idle", "ready"))   // hide the HUD if showing
@@ -633,7 +635,7 @@ final class NativeEngine: ObservableObject {
               sttModelID, sttModel.rawValue)
         // Memory-aware first-run default: on a fresh install (no config yet) on a
         // low-memory Mac, cleanup defaults off so raw dictation (~600 MB) works
-        // out of the box instead of the ~2.5 GB armed+cleanup cost swapping. An
+        // out of the box instead of the ~2.6 GB armed+cleanup cost swapping. An
         // existing config or an explicit key is always honored — this can only
         // supply a default for an absent key on a brand-new install.
         //
@@ -647,7 +649,7 @@ final class NativeEngine: ObservableObject {
         // prompt has been answered — NOT on config-file existence. persist(true)
         // writes config.toml at the end of every arm(), so a file-existence
         // heuristic flipped the low-memory default back on at the second arm
-        // (and the model to 4B), loading the ~2.3 GB LLM on exactly the low-RAM
+        // (and the model to 4B), loading the ~2 GB LLM on exactly the low-RAM
         // Macs this guards. Engine and Hub are one process, so the engine reads
         // the same flag the Hub's LowMemoryCleanupModel writes.
         let lowMemPrompted = UserDefaults.standard.bool(forKey: LowMemoryCleanupModel.promptedKey)
@@ -661,9 +663,10 @@ final class NativeEngine: ObservableObject {
         }
         cleanupStyle = doc.string("cleanup", "style") ?? "polish"
         cleanupTimeoutS = doc.double("cleanup", "timeout_s") ?? 5.0
-        // Item 6: memory-aware model-size default (1.7B on ≤8 GB, 4B on 16 GB+)
-        // when no explicit [cleanup] model key. Keyed on the memory tier, not on
-        // config-file existence, so the compact model survives a re-arm.
+        // Item 6: memory-aware model-size default (1.7B on ≤8 GB, the
+        // SimpleWords fine-tune on 16 GB+) when no explicit [cleanup] model
+        // key. Keyed on the memory tier, not on config-file existence, so the
+        // compact model survives a re-arm.
         cleanupModelID = doc.string("cleanup", "model")
             ?? MemoryTier.firstRunCleanupModel(physicalMemoryBytes: physicalMemory)
         // Residency tuning (items 4 & 5): how long after arm to preload cleanup

@@ -36,7 +36,7 @@ struct SettingsValues: Equatable {
         cleanupEnabled: true, cleanupStyle: "polish", cleanupTimeoutS: 5.0,
         hudEnabled: true, hudShowDraft: true, hudPosition: "bottom-center", hudSounds: true,
         sttModel: "mlx-community/parakeet-tdt-0.6b-v2",
-        cleanupModel: "mlx-community/Qwen3-4B-4bit",
+        cleanupModel: MemoryTier.standardCleanupModel,
         ptt: "fn", toggle: "fn+space", stop: "", cancel: "esc", quickAdd: "",
         vadEnabled: true, vadSilenceMs: 2000, vadAggressiveness: 2, audioDevice: "",
         historyEnabled: true, retentionDays: 7)

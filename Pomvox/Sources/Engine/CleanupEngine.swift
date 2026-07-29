@@ -5,8 +5,15 @@ import MLXLMCommon
 import MLXLMHuggingFace
 import MLXLMTokenizers
 
-/// Owns the mlx-swift-lm cleanup model (Qwen3 on the GPU; STT stays on the
-/// ANE). Port of `cleanup.py`'s `CleanupEngine`, the same model-owner split as
+/// Owns the mlx-swift-lm cleanup model (on the GPU; STT stays on the ANE). Two
+/// model families reach this actor: the legacy Qwen3 presets and the default
+/// SimpleWords fine-tune, which is a Qwen3.5. That difference is load-bearing
+/// rather than cosmetic — Qwen3.5's linear-attention layers hand back caches
+/// whose offset never advances, which is why the prompt-prefix prefill is a
+/// per-profile decision (`CleanupPromptProfile.usesPrefixCache`) and not a
+/// global.
+///
+/// Port of `cleanup.py`'s `CleanupEngine`, the same model-owner split as
 /// `Transcriber`: `prepare()` loads + warms off the hot path (toggle-on),
 /// `clean()` runs per utterance with a hard deadline. `nil` from `clean` means
 /// deadline / model-not-ready — `runCleanup` turns every failure into the raw
@@ -56,9 +63,10 @@ actor CleanupEngine: CleanupCleaning {
         case notTrimmable
     }
 
-    private enum FrozenPromptError: LocalizedError {
+    private enum FrozenPromptError: LocalizedError, CustomStringConvertible {
         case badRepoID(String)
         case unreadable(String)
+        case strayWeights(String)
 
         var errorDescription: String? {
             switch self {
@@ -66,8 +74,23 @@ actor CleanupEngine: CleanupCleaning {
                 return "'\(id)' is not a namespace/name Hugging Face repo id"
             case .unreadable(let path):
                 return "the model's frozen prompt is missing or empty at \(path)"
+            case .strayWeights(let path):
+                return """
+                    the shared Hugging Face cache holds a weight file Pomvox never \
+                    downloads at \(path) — some other tool (typically an unfiltered \
+                    huggingface_hub snapshot_download) wrote it into this snapshot. \
+                    mlx-swift-lm merges every .safetensors under the model directory, so \
+                    loading it would fail on unused parameter keys. Cleanup stays off \
+                    (dictation still pastes the raw transcript). Fix: delete this model's \
+                    models--… directory from the Hugging Face cache, then re-arm; Pomvox \
+                    will re-download only the files it needs.
+                    """
             }
         }
+
+        // `prepare()` surfaces load failures as `String(describing: error)`; without
+        // this that renders as `strayWeights("/…")` instead of the explanation.
+        var description: String { errorDescription ?? "cleanup model load failed" }
     }
 
     private var container: ModelContainer?
@@ -187,10 +210,10 @@ actor CleanupEngine: CleanupCleaning {
         NSLog("cleanup: prefix caches rebuilt for new dictionary hint")
     }
 
-    /// Download (first run, ~2.3 GB), load, and warm the model. Idempotent.
+    /// Download (first run, ~2 GB), load, and warm the model. Idempotent.
     /// Mirrors Python: a load failure leaves the engine unloaded (raw pastes,
     /// status timeout); a warmup failure still leaves it usable.
-    /// `onProgress` reports the download fraction [0, 1] while the ~2.3 GB
+    /// `onProgress` reports the download fraction [0, 1] while the ~2 GB
     /// first-run fetch is in flight, so the background load can surface a note
     /// instead of the first few dictations silently pasting raw.
     /// Returns a `CleanupPrepareOutcome` describing the cold-start breakdown
@@ -226,6 +249,13 @@ actor CleanupEngine: CleanupCleaning {
                 // unloaded rather than loaded-but-unpromptable.
                 let directory = try await Self.fetchFrozenSnapshot(
                     modelID: modelID, onProgress: onProgress)
+                // The shared cache may hold weights another tool downloaded (see
+                // `strayWeightFile`). `loadContainer` would merge them and die on
+                // unhandled LoRA keys, so fail here with a message that says what
+                // happened and how to fix it.
+                if let stray = Self.strayWeightFile(in: directory) {
+                    throw FrozenPromptError.strayWeights(stray.path)
+                }
                 frozenSystem = try Self.readFrozenPrompt(in: directory)
                 loaded = try await LLMModelFactory.shared.loadContainer(
                     from: HubClient.default,
@@ -306,7 +336,7 @@ actor CleanupEngine: CleanupCleaning {
 
     /// Drop the model weights (toggle-off / idle eviction); re-arm or next use
     /// reloads. The prefix caches are deliberately KEPT: they're ~100 MB of
-    /// prompt-derived K/V tensors (vs the ~2.3 GB weights), independent of the
+    /// prompt-derived K/V tensors (vs the ~2 GB weights), independent of the
     /// container instance, and still valid for the same model + hint — which
     /// is what makes the post-eviction reload fast enough for a racing
     /// dictation's deadline. `prepare()` drops them itself when the
@@ -434,11 +464,19 @@ actor CleanupEngine: CleanupCleaning {
         // into prefill-once-then-cached-gen.
         //
         // Snapshot the prompt recipe HERE, in the same suspension-free stretch
-        // as the container guard above: `prepare()` publishes `container`,
-        // `profile` and `frozenSystem` together without an await between them,
-        // so reading all three before the next suspension is what guarantees
-        // the recipe matches the weights. (The waits below suspend, so a
-        // reload could otherwise split the pair.)
+        // as the container guard above. `container` is what makes the pair safe
+        // to read, NOT the assignment order: `prepare()` sets `frozenSystem`
+        // *before* it awaits `loadContainer`, so for the whole load it is already
+        // the incoming model's prompt while `profile` still describes the old
+        // one — but `container` is nil across that entire window, so the guard
+        // above has already bailed. Only after the load do `container`,
+        // `loadedModelID`, `profile` and `loadGeneration` publish together with
+        // no await between them, and that is the state this reads. Anything
+        // that reorders `prepare()` must preserve that: keep all four
+        // assignments in one suspension-free stretch, with no `await` among
+        // them, so a `clean()` reading them sees either all-old or all-new —
+        // never a mix. (The waits below suspend, so a reload could otherwise
+        // split the pair.)
         let profile = self.profile
         let frozen = frozenSystem
         let prefixKeyForStyle = profile.prefixKey(forStyle: style)
@@ -520,7 +558,7 @@ actor CleanupEngine: CleanupCleaning {
     /// the rule editor's suggestion chips. Empty (not nil — chips are additive,
     /// there's no error state to surface) when the model isn't resident — the
     /// editor's heuristics are the floor and this is opportunistic garnish; it
-    /// must never trigger a 2.3 GB load.
+    /// must never trigger a ~2 GB load.
     func suggestVariants(for term: String, timeoutS: Double = 8.0) async -> [String] {
         guard let container else { return [] }
         guard !Task.isCancelled else { return [] }
@@ -572,9 +610,49 @@ actor CleanupEngine: CleanupCleaning {
     /// v2 repo lands an inert `adapter/adapter_config.json` (a training
     /// manifest) — but nothing in the load path reads json recursively, and
     /// excluding the adapter WEIGHTS is what keeps `loadWeights` happy.
-    private static let frozenSnapshotGlobs = [
+    ///
+    /// `CleanupEngineSnapshotGlobTests` pins that fnmatch behaviour, since the
+    /// whole frozen path rests on it. Internal, not private, so that test can
+    /// assert against the shipped patterns rather than a copy of them.
+    static let frozenSnapshotGlobs = [
         "model*.safetensors", "*.json", "*.jinja", CleanupPromptProfile.frozenPromptFilename,
     ]
+
+    /// The first `.safetensors` file in `directory` that none of
+    /// `frozenSnapshotGlobs` would have fetched, or `nil` when the snapshot holds
+    /// only weights Pomvox downloaded itself.
+    ///
+    /// The Hugging Face cache is SHARED: any other tool that snapshots this repo
+    /// without `allow_patterns` lands `adapter/adapters.safetensors` in the very
+    /// snapshot directory Pomvox loads from, and `loadWeights`
+    /// (mlx-swift-lm/Libraries/MLXLMCommon/Load.swift) enumerates it recursively,
+    /// merges every `.safetensors`, then verifies `[.all]` — so the load dies on
+    /// `unhandledKeys(["lora_a", "lora_b"])`, cleanup never comes up, and every
+    /// dictation pastes raw until the cache is purged. Detecting it here turns
+    /// that opaque dump into a message naming the file and the fix.
+    ///
+    /// Deliberately does NOT delete anything: Pomvox does not own this cache and
+    /// other tools depend on its contents. The enumeration must be recursive
+    /// because the stray file lives in a subdirectory.
+    /// Uses `subpathsOfDirectory(atPath:)` rather than a URL enumerator: it walks
+    /// recursively AND yields paths already relative to `directory`, which is the
+    /// form the download globs are matched against. A URL enumerator would need
+    /// the prefix stripped by hand, and it can hand back a symlink-resolved path
+    /// (`/private/var/...` for a `/var/...` base) that no longer shares that
+    /// prefix — which would silently classify a stray as fetched.
+    static func strayWeightFile(in directory: URL) -> URL? {
+        guard
+            let subpaths = try? FileManager.default.subpathsOfDirectory(
+                atPath: directory.path)
+        else { return nil }  // no snapshot directory at all: not this check's problem
+        for relative in subpaths where (relative as NSString).pathExtension == "safetensors" {
+            let fetched = frozenSnapshotGlobs.contains { glob in
+                fnmatch(glob, relative, 0) == 0
+            }
+            if !fetched { return directory.appendingPathComponent(relative) }
+        }
+        return nil
+    }
 
     /// Download exactly the files the frozen path needs and return the snapshot
     /// directory. `downloadSnapshot` short-circuits on a complete cached
@@ -592,7 +670,12 @@ actor CleanupEngine: CleanupCleaning {
     }
 
     /// Read the frozen prompt out of a snapshot directory.
-    private static func readFrozenPrompt(in directory: URL) throws -> String {
+    ///
+    /// Throwing (rather than returning nil and prompting the fine-tune bare) is
+    /// the spec'd failure mode: a snapshot without the prompt leaves the engine
+    /// unloaded, so `clean()` returns nil and the raw transcript pastes. Internal
+    /// only so `CleanupFrozenPromptReadTests` can cover that path.
+    static func readFrozenPrompt(in directory: URL) throws -> String {
         let url = directory.appendingPathComponent(CleanupPromptProfile.frozenPromptFilename)
         guard let text = try? String(contentsOf: url, encoding: .utf8),
             !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty

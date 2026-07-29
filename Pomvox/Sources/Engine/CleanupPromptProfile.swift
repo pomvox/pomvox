@@ -71,10 +71,12 @@ enum CleanupPromptProfile: Equatable {
 
     /// The prefix-cache key a configured style uses.
     ///
-    /// `light` and `polish` collapse onto one key on the frozen path: the
-    /// prompt is frozen, so the style knob has nothing left to vary. That also
-    /// halves the cold-launch prefill instead of prefilling two byte-identical
-    /// prefixes.
+    /// `light` and `polish` collapse onto one key on the frozen path: the prompt
+    /// is frozen, so the style knob has nothing left to vary and two keys would
+    /// only ever name the same bytes. No prefill is saved by the collapse —
+    /// `usesPrefixCache` is `false` here, so the frozen path prefills nothing at
+    /// all; the single key exists to keep the prefix-key plumbing total over
+    /// both profiles.
     func prefixKey(forStyle style: String) -> String {
         switch self {
         case .legacy: return style

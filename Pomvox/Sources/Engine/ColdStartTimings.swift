@@ -25,9 +25,11 @@ struct ColdStartTimings: Equatable, Sendable {
     /// The throwaway silent-buffer pass that warms the Neural Engine so the
     /// first real utterance hits the fast path.
     var aneWarmupMs: Double?
-    /// Full time preparing the ~2.3 GB cleanup LLM — the model load plus the
-    /// warmup pass that doubles as the Metal-kernel compile (nil when cleanup is
-    /// off, the model was already resident, or the load failed).
+    /// Full time preparing the cleanup LLM (currently
+    /// abhiram3040/simplewords-dictation-cleanup-v2, a GB-scale load, ~2 GB) —
+    /// the model load plus the warmup pass that doubles as the Metal-kernel
+    /// compile (nil when cleanup is off, the model was already resident, or
+    /// the load failed).
     var cleanupLoadMs: Double?
     /// Whether a compiled CoreML artifact for this STT model already existed on
     /// disk before this launch's load (see `CompiledModelCache`).

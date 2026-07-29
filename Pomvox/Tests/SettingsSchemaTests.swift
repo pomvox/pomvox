@@ -18,9 +18,23 @@ final class SettingsSchemaTests: XCTestCase {
         XCTAssertTrue(SettingsSchema.isRestartRequired("audio", "device"))
     }
 
+    /// `NativeEngine.cleanupEnabled`, `.cleanupStyle`, and `.cleanupTimeoutS`
+    /// are each assigned in exactly one place — `loadEngineConfig()`
+    /// (NativeEngine.swift) — which itself runs from exactly one place,
+    /// `arm()`. The per-dictation path only ever reads the cached property,
+    /// so toggling any of these three in Settings while already armed does
+    /// nothing until the next arm: the running engine keeps using whatever
+    /// was true 27 minutes ago. Until someone makes these hot-apply (i.e.
+    /// makes the per-dictation path re-read config.toml instead of a cached
+    /// field), they must warn "needs a restart" — remove an entry here only
+    /// after doing that work for the corresponding field.
+    func testCleanupRuntimeSnapshotKeysRequireRestart() {
+        XCTAssertTrue(SettingsSchema.isRestartRequired("cleanup", "enabled"))
+        XCTAssertTrue(SettingsSchema.isRestartRequired("cleanup", "style"))
+        XCTAssertTrue(SettingsSchema.isRestartRequired("cleanup", "timeout_s"))
+    }
+
     func testHotAppliableKeysAreNotRestartRequired() {
-        XCTAssertFalse(SettingsSchema.isRestartRequired("cleanup", "style"))
-        XCTAssertFalse(SettingsSchema.isRestartRequired("cleanup", "enabled"))
         XCTAssertFalse(SettingsSchema.isRestartRequired("vad", "silence_ms"))
         XCTAssertFalse(SettingsSchema.isRestartRequired("hud", "position"))
         XCTAssertFalse(SettingsSchema.isRestartRequired("history", "retention_days"))
@@ -69,5 +83,24 @@ final class SettingsSchemaTests: XCTestCase {
     func testStopSameAsCancelWarns() {
         let c = HotkeyChoice(ptt: "fn", toggle: "fn+space", stop: "esc", cancel: "esc")
         XCTAssertFalse(SettingsSchema.hotkeyConflicts(c).isEmpty)
+    }
+
+    // MARK: cleanup model presets
+
+    func testTheDefaultCleanupModelIsOfferedAsAPreset() {
+        XCTAssertEqual(
+            SettingsSchema.cleanupModelPresets.first, MemoryTier.standardCleanupModel,
+            "the shipped default should head the list the user picks from")
+    }
+
+    /// Open-source-first: swapping the default must not remove the Qwen3
+    /// options a user may already be running.
+    func testTheQwen3PresetsRemainSelectable() {
+        for id in [
+            "mlx-community/Qwen3-4B-4bit", "mlx-community/Qwen3-1.7B-4bit",
+            "mlx-community/Qwen3-8B-4bit",
+        ] {
+            XCTAssertTrue(SettingsSchema.cleanupModelPresets.contains(id), id)
+        }
     }
 }
