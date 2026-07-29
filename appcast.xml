@@ -6,6 +6,16 @@
     <description>Pomvox release feed</description>
     <language>en</language>
     <item>
+      <title>Version 0.2.1</title>
+      <pubDate>Wed, 29 Jul 2026 06:02:41 +0000</pubDate>
+      <sparkle:version>12</sparkle:version>
+      <sparkle:shortVersionString>0.2.1</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+      <sparkle:releaseNotesLink>https://github.com/abhiram304/pomvox/releases/tag/v0.2.1</sparkle:releaseNotesLink>
+      <enclosure url="https://github.com/abhiram304/pomvox/releases/download/v0.2.1/Pomvox.zip" length="14647249"
+                 type="application/octet-stream" sparkle:edSignature="GAuyEP764KIBrOowu2hi0VJyCxKgw9XbSQ6NoTi/RmJiwfODS4CIuFebTb5PkDm3gdTaEWWPmaNp5kOoZ34KAw=="/>
+    </item>
+    <item>
       <title>Version 0.2.0</title>
       <pubDate>Fri, 17 Jul 2026 03:37:27 +0000</pubDate>
       <sparkle:version>9</sparkle:version>
