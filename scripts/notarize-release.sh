@@ -15,7 +15,7 @@
 #   2. Create an app-specific password at appleid.apple.com ▸ Sign-In & Security
 #      ▸ App-Specific Passwords, then store a notarytool keychain profile (once):
 #
-#        xcrun notarytool store-credentials "natter-notary" \
+#        xcrun notarytool store-credentials "pomvox-notary" \
 #          --apple-id "you@example.com" --team-id "CT84AT52RS" \
 #          --password "abcd-efgh-ijkl-mnop"
 #
@@ -27,7 +27,7 @@
 #
 # Override any of these via the environment:
 #   TEAM_ID        Apple Developer team id            (default: CT84AT52RS)
-#   NOTARY_PROFILE notarytool keychain profile name   (default: natter-notary)
+#   NOTARY_PROFILE notarytool keychain profile name   (default: pomvox-notary)
 #   DEVELOPER_DIR  Xcode.app developer dir            (default: /Applications/Xcode.app/...)
 #   DD             derived-data path (keep OFF iCloud) (default: /tmp/pomvox-release-dd)
 #   OUT            output dir for the zip             (default: ./dist)
@@ -35,7 +35,7 @@
 set -euo pipefail
 
 TEAM_ID="${TEAM_ID:-CT84AT52RS}"
-NOTARY_PROFILE="${NOTARY_PROFILE:-natter-notary}"
+NOTARY_PROFILE="${NOTARY_PROFILE:-pomvox-notary}"
 export DEVELOPER_DIR="${DEVELOPER_DIR:-/Applications/Xcode.app/Contents/Developer}"
 DD="${DD:-/tmp/pomvox-release-dd}"           # never build on the iCloud Desktop —
 OUT="${OUT:-$(pwd)/dist}"                     # codesign rejects iCloud xattrs.
