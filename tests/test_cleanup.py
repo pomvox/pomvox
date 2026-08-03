@@ -1,9 +1,12 @@
 """Pure-logic tests for the cleanup pass (no mlx required)."""
 
 from pomvox.cleanup import (
+    MIN_RATIO,
+    MIN_RATIO_CORRECTION,
     accept_output,
     build_messages,
     common_prefix_len,
+    min_ratio,
     run_cleanup,
 )
 
@@ -92,6 +95,65 @@ def test_reject_far_too_short():
 
 def test_short_raw_skips_lower_bound():
     assert accept_output("ok", "OK.") == "OK."
+
+
+# --- correction-aware length floor ------------------------------------------
+
+_CORRECTION_RAW = "Let's meet Thursday. No, no, wait, uh we'll meet Friday actually."
+
+
+def test_self_correction_survives_the_floor():
+    """The flat 0.30 floor was inverted here: it rejected the correct output
+    (ratio 0.277) and admitted the wrong one (0.308)."""
+    assert accept_output(_CORRECTION_RAW, "Let's meet Friday.") == "Let's meet Friday."
+
+
+def test_the_correct_answer_is_shorter_than_the_wrong_one():
+    right = len("Let's meet Friday.") / len(_CORRECTION_RAW)
+    wrong = len("Let's meet Thursday.") / len(_CORRECTION_RAW)
+    assert right < wrong
+    assert right < MIN_RATIO  # the flat floor would reject the right answer
+    assert right > MIN_RATIO_CORRECTION
+
+
+def test_correction_markers_lower_the_floor():
+    for raw in (
+        "Let's meet Thursday. No, no, wait, we'll meet Friday.",
+        "Send it Tuesday, scratch that, Wednesday.",
+        "We need four, I mean five.",
+        "Ship it Monday, make that Tuesday.",
+        "Call him first, or rather email him first.",
+        "Let's do Friday. Or actually, let's do Thursday.",
+        "Book the big room, hold on, the small one.",
+        "We'll need two, let's say three.",
+    ):
+        assert min_ratio(raw) == MIN_RATIO_CORRECTION, raw
+
+
+def test_ordinary_content_keeps_the_strict_floor():
+    """A bare "no" must not buy an utterance a weaker floor."""
+    for raw in (
+        "There's no rush on this one at all.",
+        "No, I don't think that's going to work for us.",
+        "We have no idea what happened to the build.",
+        "The meeting is confirmed for Tuesday at 3 PM.",
+    ):
+        assert min_ratio(raw) == MIN_RATIO, raw
+
+
+def test_doubled_no_is_a_marker_but_a_single_no_is_not():
+    assert min_ratio("Bananas. No, no, oranges.") == MIN_RATIO_CORRECTION
+    assert min_ratio("Bananas. No no oranges.") == MIN_RATIO_CORRECTION
+    assert min_ratio("No, oranges are what we need here.") == MIN_RATIO
+
+
+def test_the_relaxed_floor_still_rejects_a_total_collapse():
+    assert accept_output(_CORRECTION_RAW, "Fri") is None
+
+
+def test_the_strict_floor_still_applies_without_a_marker():
+    raw = "The meeting is confirmed for Tuesday at 3 PM in the main room."
+    assert accept_output(raw, "Tuesday.") is None
 
 
 # --- run_cleanup ------------------------------------------------------------

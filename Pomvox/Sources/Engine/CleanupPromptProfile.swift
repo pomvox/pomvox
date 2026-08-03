@@ -24,14 +24,26 @@ enum CleanupPromptProfile: Equatable {
     /// Deliberately an EXACT set rather than a prefix match:
     /// `abhiram3040/simplewords-dictation-cleanup` (v1) is an adapter-only repo
     /// with no fused weights and no `system_v2.txt`, so a prefix match would
-    /// route it here and fail at load. A future v3 gets its own entry.
+    /// route it here and fail at load. Each new version earns its own entry.
+    ///
+    /// v2 stays listed after v3 became the default: it is still published and
+    /// still serving, so a user who pinned it in `config.toml` — or a one-line
+    /// rollback of `MemoryTier.standardCleanupModel` — must keep the frozen
+    /// path. Both were trained on the same frozen prompt.
     private static let frozenPromptIDs: Set<String> = [
-        "abhiram3040/simplewords-dictation-cleanup-v2"
+        "abhiram3040/simplewords-dictation-cleanup-v2",
+        "abhiram3040/simplewords-dictation-cleanup-v3",
     ]
 
     /// The frozen prompt's filename inside the model snapshot. The bytes are
     /// read from there at load, never copied into this repo, so they cannot
     /// drift from the weights that were trained on them.
+    ///
+    /// The name does NOT track the model version, and `system_v2.txt` is correct
+    /// for v3 — there is no `system_v3.txt` to point at. v3 was trained on the
+    /// same frozen prompt as v2 so that the corpus is the only variable across
+    /// versions, and it publishes that prompt under the name it was frozen
+    /// under. Renaming this to match the model version breaks the load.
     static let frozenPromptFilename = "system_v2.txt"
 
     /// The one prefix-cache key every style shares on the frozen path.

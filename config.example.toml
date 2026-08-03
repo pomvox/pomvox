@@ -37,7 +37,7 @@ enabled = true
 # Qwen3-8B-4bit preset is available but only sensible on higher-RAM machines.
 #
 # The 16 GB+ default differs between the two engines. The native (Swift) app —
-# what you run day to day — defaults to abhiram3040/simplewords-dictation-cleanup-v2,
+# what you run day to day — defaults to abhiram3040/simplewords-dictation-cleanup-v3,
 # a dictation-cleanup fine-tune that ships its own frozen prompt. This file
 # documents the *Python reference engine*, which has no frozen-prompt path and so
 # keeps a general instruction-tuned model as its 16 GB+ default. Either value is

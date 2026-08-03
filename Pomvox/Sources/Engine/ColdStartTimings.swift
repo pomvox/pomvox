@@ -26,7 +26,7 @@ struct ColdStartTimings: Equatable, Sendable {
     /// first real utterance hits the fast path.
     var aneWarmupMs: Double?
     /// Full time preparing the cleanup LLM (currently
-    /// abhiram3040/simplewords-dictation-cleanup-v2, a GB-scale load, ~2 GB) —
+    /// abhiram3040/simplewords-dictation-cleanup-v3, a GB-scale load, ~2 GB) —
     /// the model load plus the warmup pass that doubles as the Metal-kernel
     /// compile (nil when cleanup is off, the model was already resident, or
     /// the load failed).

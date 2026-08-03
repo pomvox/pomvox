@@ -8,8 +8,10 @@
 Fully local, privacy-first voice dictation for macOS on Apple Silicon. Hold a
 hotkey, speak, and the transcript is inserted into whatever text field is
 focused — in any app. Speech-to-text runs on the Neural Engine and an optional
-cleanup pass runs a local LLM on the GPU. **Your voice and transcripts never
-leave your machine.** The only network calls are the one-time model download
+cleanup pass runs a local LLM on the GPU — by default
+[SimpleWords v3](https://huggingface.co/abhiram3040/simplewords-dictation-cleanup-v3),
+a dictation-cleanup fine-tune built for this app. **Your voice and transcripts
+never leave your machine.** The only network calls are the one-time model download
 from Hugging Face, a once-a-day check for app updates (on by default, off
 anytime in Settings → General), and — if you choose to share them on first
 launch — anonymous, content-free usage stats (change anytime in
@@ -161,6 +163,14 @@ Settings are edited in the Hub; everything also lives in `~/.pomvox/config.toml`
 
 Anything model-shaped is a config value, never a constant — swap STT and cleanup
 models to trade speed for quality on your hardware.
+
+On a 16 GB+ Mac the cleanup default is
+[`abhiram3040/simplewords-dictation-cleanup-v3`](https://huggingface.co/abhiram3040/simplewords-dictation-cleanup-v3)
+(8-bit, ~1.9 GB on disk) — a fine-tune trained specifically to clean up spoken
+dictation, including self-corrections that span a sentence boundary ("Let's meet
+Thursday. No, no, wait, we'll meet Friday." → "Let's meet Friday."). Smaller
+Macs get a compact general model instead. Both are ordinary `[cleanup] model`
+values, so you can point at any MLX-compatible model you like.
 
 ## Privacy
 

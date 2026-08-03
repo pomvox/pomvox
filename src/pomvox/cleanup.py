@@ -119,6 +119,38 @@ _SHORT_RAW = 15  # chars; skip the lower length bound for very short inputs
 _QUOTES_OPEN = "\"'“"
 _QUOTES_CLOSE = "\"'”"
 
+# Lower bounds on len(out)/len(raw) before an output is treated as over-trimming
+# and the raw transcript is used instead.
+MIN_RATIO = 0.30
+MIN_RATIO_CORRECTION = 0.15
+
+# Markers that license deleting a whole clause. Deliberately EXCLUDES a bare
+# "no" — "There's no rush." is ordinary content and must not buy an utterance a
+# weaker floor. "no, no" (two of them) is a correction; one is not.
+#
+# Mirrors _CORR_SIGNAL in the corpus repo's guards.py and
+# CleanupLogic.correctionSignal in the Swift engine; the three must not diverge.
+_CORR_SIGNAL = re.compile(
+    r"\b(?:wait|scratch that|i mean|make that|or rather|actually|hold on|"
+    r"let's say|no\s*,?\s*no)\b",
+    re.IGNORECASE,
+)
+
+
+def min_ratio(raw: str) -> float:
+    """The length floor for *raw*.
+
+    A flat floor assumes cleanup only ever trims filler, so the output tracks the
+    input's length. A self-correction breaks that assumption: it legitimately
+    deletes the entire superseded clause. Measured on the case this shipped for —
+    "Let's meet Thursday. No, no, wait, uh we'll meet Friday actually." ->
+    "Let's meet Friday." is ratio 0.277, while the WRONG answer that keeps the
+    superseded day ("Let's meet Thursday.") is 0.308. A flat 0.30 floor is
+    therefore inverted on exactly these utterances: it admits the wrong answer
+    and rejects the right one.
+    """
+    return MIN_RATIO_CORRECTION if _CORR_SIGNAL.search(raw) else MIN_RATIO
+
 
 def build_messages(text: str, style: str, terms_hint: str = "") -> list[dict]:
     """Chat messages for one cleanup request, few-shot examples included.
@@ -164,7 +196,7 @@ def accept_output(raw: str, cleaned: str) -> str | None:
         return None
     if len(out) > 2 * len(raw) + 20:
         return None
-    if len(raw) > _SHORT_RAW and len(out) < 0.3 * len(raw):
+    if len(raw) > _SHORT_RAW and len(out) < min_ratio(raw) * len(raw):
         return None
     # On-device regressions (2026-07-16): the model sometimes ANSWERS a spoken
     # question ("Should I test manually one by one?" -> "Yes, test manually

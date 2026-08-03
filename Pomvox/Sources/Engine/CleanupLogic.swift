@@ -127,6 +127,46 @@ enum CleanupLogic {
     private static let quotesOpen: Set<Character> = ["\"", "'", "“"]
     private static let quotesClose: Set<Character> = ["\"", "'", "”"]
 
+    /// Lower bound on `len(out) / len(raw)` before an output is treated as
+    /// over-trimming and the raw transcript pastes instead.
+    static let minRatio = 0.30
+    /// The same bound when the raw carries a spoken self-correction.
+    static let minRatioCorrection = 0.15
+
+    /// Markers that license deleting a whole clause.
+    ///
+    /// Deliberately EXCLUDES a bare "no" — "There's no rush." is ordinary content
+    /// and must not buy an utterance a weaker floor. "no, no" (two of them) is a
+    /// correction; one is not.
+    ///
+    /// Mirrors `_CORR_SIGNAL` in the corpus repo's `guards.py` and `src/pomvox/
+    /// cleanup.py`; the three must not diverge.
+    private static let correctionSignal = try! NSRegularExpression(
+        pattern:
+            #"\b(?:wait|scratch that|i mean|make that|or rather|actually|hold on|let's say|no\s*,?\s*no)\b"#,
+        options: [.caseInsensitive])
+
+    /// The length floor for this raw transcript.
+    ///
+    /// A flat floor assumes cleanup only ever trims filler, so the output tracks
+    /// the input's length. A self-correction breaks that assumption: it
+    /// legitimately deletes the entire superseded clause, so the correct output
+    /// is far shorter than the raw. Measured on the case this shipped for —
+    /// "Let's meet Thursday. No, no, wait, uh we'll meet Friday actually." →
+    /// "Let's meet Friday." is ratio 0.277, while the WRONG answer that keeps the
+    /// superseded day ("Let's meet Thursday.") is 0.308. A flat 0.30 floor is
+    /// therefore inverted on exactly these utterances: it admits the wrong answer
+    /// and rejects the right one.
+    ///
+    /// The relaxation is narrow by measurement, not by hope: across the model
+    /// author's full held-out evaluation (150 eval + 300 Disfl-QA + 44 regression
+    /// rows) no other behaviourally-correct output fell under the flat floor.
+    static func minRatio(forRaw raw: String) -> Double {
+        let range = NSRange(raw.startIndex..<raw.endIndex, in: raw)
+        let matched = correctionSignal.firstMatch(in: raw, options: [], range: range) != nil
+        return matched ? minRatioCorrection : minRatio
+    }
+
     /// Chat messages for one cleanup request, few-shot examples included.
     ///
     /// `termsHint` (see `dictionaryPromptHint`) is an optional extra system rule
@@ -200,7 +240,9 @@ enum CleanupLogic {
         if lowered.contains("<think>") || lowered.contains("</think>") { return nil }
         if rolePrefixes.contains(where: lowered.hasPrefix) { return nil }
         if out.count > 2 * raw.count + 20 { return nil }
-        if raw.count > shortRaw, Double(out.count) < 0.3 * Double(raw.count) { return nil }
+        if raw.count > shortRaw, Double(out.count) < minRatio(forRaw: raw) * Double(raw.count) {
+            return nil
+        }
         // On-device regressions (2026-07-16): the model sometimes ANSWERS a spoken
         // question ("Should I test manually one by one?" -> "Yes, test manually
         // one by one.") or substitutes a short phrase wholesale ("Go ahead." ->

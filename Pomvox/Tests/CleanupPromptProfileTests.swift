@@ -10,9 +10,30 @@ final class CleanupPromptProfileTests: XCTestCase {
             .simpleWords)
     }
 
+    /// The shipped default. Because `frozenPromptIDs` is an exact set, a missing
+    /// entry here does not fail loudly — it silently routes the fine-tune down
+    /// the legacy few-shot path it was never trained on.
+    func testTheV3IDResolvesToTheFrozenProfile() {
+        XCTAssertEqual(
+            CleanupPromptProfile.forModel("abhiram3040/simplewords-dictation-cleanup-v3"),
+            .simpleWords)
+    }
+
+    /// v2 is still published and still frozen-prompted, so pinning it in
+    /// `config.toml` — or rolling `standardCleanupModel` back one line — keeps
+    /// working.
+    func testTheSupersededV2StaysOnTheFrozenPath() {
+        XCTAssertEqual(
+            CleanupPromptProfile.forModel("abhiram3040/simplewords-dictation-cleanup-v2"),
+            .simpleWords)
+    }
+
     func testDetectionIgnoresCaseAndSurroundingWhitespace() {
         XCTAssertEqual(
             CleanupPromptProfile.forModel("  Abhiram3040/SimpleWords-Dictation-Cleanup-V2\n"),
+            .simpleWords)
+        XCTAssertEqual(
+            CleanupPromptProfile.forModel("  Abhiram3040/SimpleWords-Dictation-Cleanup-V3\n"),
             .simpleWords)
     }
 
