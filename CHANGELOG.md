@@ -7,6 +7,24 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 
 ## [Unreleased]
 
+### Performance
+
+- **Cleanup is about 2.5× faster — roughly 1.5 s down to 0.6 s per dictation.**
+  Before writing a word, the model had to read its ~256-token instruction sheet,
+  and it re-read the whole thing from scratch on every single dictation even
+  though the text never changes. That reading was ~1.09 s of a measured 1.48 s.
+  Pomvox now reads it once when cleanup starts up and reuses the result, so each
+  dictation only processes what you actually said. Measured end-to-end through
+  the real dictation path on an M1: p50 1.48 s → 0.58 s.
+
+  This was previously believed impossible for this model. Its layers are of two
+  kinds, and the older code assumed one kind — it asked a layer that structurally
+  cannot count tokens how many it had seen, and it built the saved state with a
+  tool that overshoots by a token in a way that kind of layer can't undo. Reading
+  without that overshoot, and asking every layer instead of the first, fixes
+  both. Verified by running the same transcripts with and without reuse and
+  requiring character-for-character identical output.
+
 ### Changed
 
 - **The cleanup model is now SimpleWords v3, which understands corrections you
