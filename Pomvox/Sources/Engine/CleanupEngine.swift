@@ -8,10 +8,12 @@ import MLXLMTokenizers
 /// Owns the mlx-swift-lm cleanup model (on the GPU; STT stays on the ANE). Two
 /// model families reach this actor: the legacy Qwen3 presets and the default
 /// SimpleWords fine-tune, which is a Qwen3.5. That difference is load-bearing
-/// rather than cosmetic — Qwen3.5's linear-attention layers hand back caches
-/// whose offset never advances, which is why the prompt-prefix prefill is a
-/// per-profile decision (`CleanupPromptProfile.usesPrefixCache`) and not a
-/// global.
+/// rather than cosmetic — Qwen3.5 is a HYBRID, interleaving full-attention
+/// layers (which advance a cache `offset`) with linear-attention layers (which
+/// hold a running recurrence and report offset 0 forever). Anything that walks
+/// the KV cache here must tolerate both, which is why `buildPrefixCaches`
+/// prefills without sampling and checks every layer's offset rather than
+/// layer 0's — see `CleanupPromptProfile.usesPrefixCache` for the full history.
 ///
 /// Port of `cleanup.py`'s `CleanupEngine`, the same model-owner split as
 /// `Transcriber`: `prepare()` loads + warms off the hot path (toggle-on),
@@ -59,8 +61,13 @@ actor CleanupEngine: CleanupCleaning {
     }
 
     private enum PrefixCacheError: Error {
+        /// No layer reached the prefix length, or one overshot it. With a
+        /// sampling-free prefill this should be unreachable; it stays as the
+        /// assertion that the cache really does hold the prefix and nothing
+        /// more, since a silently-wrong cache changes output rather than
+        /// failing. (`notTrimmable` retired with the `TokenIterator` prefill —
+        /// there is no overshoot left to trim.)
         case unexpectedOffset(got: Int, want: Int)
-        case notTrimmable
     }
 
     private enum FrozenPromptError: LocalizedError, CustomStringConvertible {
@@ -92,6 +99,25 @@ actor CleanupEngine: CleanupCleaning {
         // this that renders as `strayWeights("/…")` instead of the explanation.
         var description: String { errorDescription ?? "cleanup model load failed" }
     }
+
+    /// Force the prompt-prefix cache off regardless of profile.
+    ///
+    /// Exists for one reason: `CleanupPrefixCacheDifferentialTests` has to run
+    /// the SAME model both ways and compare the text character-for-character.
+    /// Reusing a recurrent layer's state is only sound if the model's bulk-read
+    /// and one-token-at-a-time paths agree on that state, and a disagreement
+    /// there does not throw — it quietly changes the output. Nothing but a
+    /// side-by-side comparison catches that, and the comparison needs a way to
+    /// ask one engine for the uncached answer.
+    private let prefixCacheDisabled: Bool
+
+    init(prefixCacheDisabled: Bool = false) {
+        self.prefixCacheDisabled = prefixCacheDisabled
+    }
+
+    /// Whether this engine may prefill a reusable prompt prefix: the profile's
+    /// decision, unless a test has forced it off.
+    private var canPrefixCache: Bool { !prefixCacheDisabled && profile.usesPrefixCache }
 
     private var container: ModelContainer?
     private var preparing = false
@@ -154,6 +180,13 @@ actor CleanupEngine: CleanupCleaning {
 
     var isLoaded: Bool { container != nil }
 
+    /// Whether at least one prompt prefix is prefilled and available for reuse.
+    ///
+    /// For diagnostics and for the differential test, which would otherwise
+    /// compare an uncached run against another uncached run — and pass — if the
+    /// prefill had quietly failed.
+    var hasPrefixCache: Bool { !prefixCaches.isEmpty }
+
     /// Set the dictionary prompt hint. Must precede `prepare()`/`buildPrefixCaches`
     /// so the hint rides inside the prefilled prefix.
     func setTermsHint(_ hint: String) { termsHint = hint }
@@ -182,7 +215,7 @@ actor CleanupEngine: CleanupCleaning {
         // re-run the same doomed ~2.8 s prefill on every dictionary edit. The
         // caller posts `.pomvoxDictionaryHintApplied` when this returns either
         // way, so the page's "applying…" chip still clears.
-        guard profile.usesPrefixCache else { return }
+        guard canPrefixCache else { return }
         guard container != nil, !rebuildingHint else { return }
         rebuildingHint = true
         defer { rebuildingHint = false }
@@ -300,9 +333,9 @@ actor CleanupEngine: CleanupCleaning {
         // sitting out its deadline reserve waiting for a cache that will never
         // arrive; the caches and their key are dropped because any leftovers
         // belong to a different (legacy) model and are ~100 MB of dead tensors.
-        let rebuild = profile.usesPrefixCache
+        let rebuild = canPrefixCache
             && (prefixKey != current || prefixCaches.count < keys.count)
-        if !profile.usesPrefixCache {
+        if !canPrefixCache {
             prefixCaches = [:]
             prefixKey = nil
             prefixAttempted = Set(keys)
@@ -394,26 +427,38 @@ actor CleanupEngine: CleanupCleaning {
                         context, text: "a different text entirely", style: key, termsHint: hint,
                         profile: profile, frozenSystem: frozen)
                     let prefix = Array(a.prefix(CleanupLogic.commonPrefixLen(a, b)))
-                    // TokenIterator prefills the prompt into the cache and
-                    // samples ahead; generate one token like Python's
-                    // stream_generate(max_tokens=1), then trim the overshoot
-                    // back off so the cache holds exactly the prefix.
+                    // Fill the cache with EXACTLY the prefix, using a plain
+                    // forward pass rather than a `TokenIterator`.
+                    //
+                    // The iterator samples a token as a side effect, which
+                    // advances the cache one token PAST the prefix. On a
+                    // homogeneous attention model that overshoot is trimmable;
+                    // on a hybrid it is not, because a linear-attention layer
+                    // holds a running recurrence rather than per-token history —
+                    // there is no last entry to drop. Reading without sampling
+                    // means there is no overshoot to undo in the first place.
+                    //
+                    // This is what the model's own prefill does per chunk
+                    // (`LLMModel.prepare`); its `withPreparedCache(lengths:)`
+                    // wrapper is a no-op for a single unbatched sequence.
                     let cache = context.model.newCache(parameters: nil)
-                    var iterator = try TokenIterator(
-                        input: LMInput(tokens: MLXArray(prefix.map(Int32.init))),
-                        model: context.model, cache: cache,
-                        parameters: GenerateParameters(maxTokens: 1, temperature: 0.0))
-                    _ = iterator.next()
-                    let offset = cache.first?.offset ?? 0
-                    let over = offset - prefix.count
-                    guard over >= 0, over <= 2 else {
-                        throw PrefixCacheError.unexpectedOffset(got: offset, want: prefix.count)
-                    }
-                    if over > 0 {
-                        guard cache.allSatisfy({ $0.isTrimmable }) else {
-                            throw PrefixCacheError.notTrimmable
-                        }
-                        for layer in cache { _ = layer.trim(over) }
+                    let ids = MLXArray(prefix.map(Int32.init)).reshaped([1, prefix.count])
+                    _ = context.model(ids, cache: cache)
+                    // Hybrid-safe offset check. Full-attention layers advance
+                    // `offset`; linear-attention layers never do and report 0
+                    // forever, which is correct for them and not a failure. The
+                    // old check read `cache.first?.offset` — layer 0 here is
+                    // linear, so it always saw 0 against a wanted ~265 and threw
+                    // `unexpectedOffset` before caching could ever engage.
+                    // Accept only the two legitimate answers, and require that
+                    // at least one layer genuinely counted (so a model whose
+                    // every layer reported 0 can't pass as "cached").
+                    let offsets = cache.map(\.offset)
+                    guard offsets.contains(prefix.count),
+                        offsets.allSatisfy({ $0 == 0 || $0 == prefix.count })
+                    else {
+                        throw PrefixCacheError.unexpectedOffset(
+                            got: offsets.max() ?? 0, want: prefix.count)
                     }
                     // `perform` requires arrays evaluated before they leave.
                     eval(cache.flatMap { $0.innerState() })

@@ -67,17 +67,35 @@ enum CleanupPromptProfile: Equatable {
     /// Whether this profile's prompt prefix can be prefilled into a reusable
     /// KV cache.
     ///
-    /// `false` for the fine-tune: it is Qwen3.5, whose `newCache` hands back a
-    /// `MambaCache` for every linear-attention layer, and `ArraysCache` never
-    /// advances `offset` — so the prefill's offset check can't pass and the
-    /// layers aren't trimmable either. It doesn't matter: the frozen prompt is
-    /// ~276 tokens against the legacy path's few-shot prefix, and an uncached
-    /// cleanup measures ~0.9 s on an M1. Attempting the prefill anyway costs
-    /// ~2.8 s per residency and can never succeed.
+    /// `true` for both. It was `false` for the fine-tune until 2026-08-03, on
+    /// the reading that Qwen3.5 made prefix caching impossible: `newCache` hands
+    /// back a `MambaCache` for every linear-attention layer, `ArraysCache` never
+    /// advances `offset`, and those layers aren't trimmable. Both observations
+    /// are true; the conclusion drawn from them was not. Neither is a property
+    /// of the architecture — they were properties of how `buildPrefixCaches`
+    /// prefilled:
+    ///
+    /// - it read `cache.first?.offset` to validate the prefill, and layer 0 of
+    ///   this model is linear (`layer_types[0] == "linear_attention"`, with a
+    ///   full-attention layer only every 4th), so the check interrogated the one
+    ///   layer that structurally cannot answer and always saw 0;
+    /// - it prefilled with a `TokenIterator`, which SAMPLES a token as a side
+    ///   effect and so overshoots the prefix by one — an overshoot a recurrent
+    ///   layer cannot give back.
+    ///
+    /// Prefilling with a plain forward pass removes the overshoot entirely, and
+    /// checking every layer's offset instead of layer 0's tolerates the hybrid.
+    /// Reusing a linear-attention layer's recurrent state across requests is
+    /// sound because that state IS the summary of the fixed prefix — it does not
+    /// depend on what follows.
+    ///
+    /// This matters because the frozen prompt is ~265 of the ~279 tokens in a
+    /// typical request: uncached, every dictation re-prefills it and spends
+    /// ~1.09 s of a measured ~1.48 s doing so.
     var usesPrefixCache: Bool {
         switch self {
         case .legacy: return true
-        case .simpleWords: return false
+        case .simpleWords: return true
         }
     }
 

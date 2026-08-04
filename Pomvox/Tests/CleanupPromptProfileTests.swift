@@ -68,13 +68,25 @@ final class CleanupPromptProfileTests: XCTestCase {
         XCTAssertEqual(profile.prefixKeys, [profile.prefixKey(forStyle: "polish")])
     }
 
-    /// The few-shot prefix is worth prefilling; the fine-tune's cannot be
-    /// prefilled at all (Qwen3.5 hands back a `MambaCache` for its
-    /// linear-attention layers, whose offset never advances), so `prepare()`
-    /// must skip the build instead of spending ~2.8 s failing it.
-    func testOnlyTheLegacyProfileUsesThePrefixCache() {
+    /// Both profiles prefill their prompt prefix.
+    ///
+    /// The fine-tune's was disabled until 2026-08-03 on the reading that
+    /// Qwen3.5's linear-attention layers made caching impossible — they hand
+    /// back a `MambaCache` whose offset never advances and which cannot be
+    /// trimmed. Both facts hold; neither actually blocked caching. What blocked
+    /// it was prefilling with a `TokenIterator` (which samples, overshooting by
+    /// a token that a recurrent layer can't give back) and validating via
+    /// `cache.first?.offset` (layer 0 is linear on this model, so it always
+    /// reported 0). A sampling-free prefill and an all-layer offset check
+    /// remove both. It matters: the frozen prompt is ~265 of ~279 tokens per
+    /// request, so re-prefilling it cost ~1.09 s of a measured ~1.48 s.
+    ///
+    /// Soundness is enforced by `CleanupPrefixCacheDifferentialTests`, which
+    /// demands cached and uncached output match character-for-character. If
+    /// that ever fails, this returns to `false` for `.simpleWords`.
+    func testBothProfilesUseThePrefixCache() {
         XCTAssertTrue(CleanupPromptProfile.legacy.usesPrefixCache)
-        XCTAssertFalse(CleanupPromptProfile.simpleWords.usesPrefixCache)
+        XCTAssertTrue(CleanupPromptProfile.simpleWords.usesPrefixCache)
     }
 
     /// Every style the UI can produce must map to a key the engine will have
