@@ -7,7 +7,33 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 
 ## [Unreleased]
 
+### Changed
+
+- **The cleanup model is now SimpleWords v3, which understands corrections you
+  make in a *later* sentence.** Saying "Let's meet Thursday. No, no, wait, we'll
+  meet Friday." now pastes "Let's meet Friday." Previously the correction only
+  registered inside a single sentence ("tuesday wait no friday at noon") — start
+  a new sentence and the superseded day survived, so you got the wrong day
+  pasted silently. Measured on the model author's held-out sets: cross-sentence
+  corrections 122/122 (was 15/77), must-not-correct negatives 30/30 (was 25/30),
+  real human disfluency 231/300 (was 27/300). The previous model is still
+  published if you pin it in `config.toml`.
+
+  One known trade, documented on the model card: a *chained triple* correction
+  in lowercase unpunctuated form ("red one no the blue one actually the green
+  one") now comes back unchanged. It could not be fixed alongside the
+  cross-sentence cases that were causing real mispastes.
+
 ### Fixed
+
+- **A correction that shortened your sentence a lot could paste the raw,
+  disfluent text.** Cleanup rejects suspiciously short output as over-trimming,
+  but a self-correction legitimately deletes the whole superseded clause — so
+  the correct "Let's meet Friday." was thrown out for being too short while the
+  *wrong* "Let's meet Thursday." squeaked past. The length floor now recognizes
+  spoken correction markers ("wait", "no, no", "scratch that", "I mean", …) and
+  allows the larger cut on exactly those utterances. Ordinary speech is
+  unaffected: a bare "no" ("There's no rush.") deliberately does not qualify.
 
 - **Spoken lists now actually format — including numbered ones.** Saying
   "here's a list of to dos, one… two… three…" now comes out as a numbered

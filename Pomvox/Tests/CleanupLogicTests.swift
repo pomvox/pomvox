@@ -96,6 +96,82 @@ final class CleanupLogicTests: XCTestCase {
         XCTAssertEqual(CleanupLogic.acceptOutput(raw: "ok", cleaned: "OK."), "OK.")
     }
 
+    // MARK: - Correction-aware length floor
+
+    /// The production case this shipped for. The flat 0.30 floor was INVERTED
+    /// here: it rejected the correct output (0.277) and admitted the wrong one
+    /// (0.308), so the user got either the raw disfluent text or the wrong day.
+    func testASelfCorrectionKeepsOnlyTheRevisionAndSurvivesTheFloor() {
+        let raw = "Let's meet Thursday. No, no, wait, uh we'll meet Friday actually."
+        XCTAssertEqual(CleanupLogic.acceptOutput(raw: raw, cleaned: "Let's meet Friday."),
+                       "Let's meet Friday.")
+    }
+
+    /// The inversion, stated as a ratio so the numbers in the doc comment are
+    /// checked rather than asserted in prose.
+    func testTheCorrectAnswerIsShorterThanTheWrongOne() {
+        let raw = "Let's meet Thursday. No, no, wait, uh we'll meet Friday actually."
+        let right = Double("Let's meet Friday.".count) / Double(raw.count)
+        let wrong = Double("Let's meet Thursday.".count) / Double(raw.count)
+        XCTAssertLessThan(right, wrong)
+        XCTAssertLessThan(right, CleanupLogic.minRatio, "the flat floor would reject the right answer")
+        XCTAssertGreaterThan(right, CleanupLogic.minRatioCorrection)
+    }
+
+    func testCorrectionMarkersLowerTheFloor() {
+        for raw in [
+            "Let's meet Thursday. No, no, wait, we'll meet Friday.",
+            "Send it Tuesday, scratch that, Wednesday.",
+            "We need four, I mean five.",
+            "Ship it Monday, make that Tuesday.",
+            "Call him first, or rather email him first.",
+            "Let's do Friday. Or actually, let's do Thursday.",
+            "Book the big room, hold on, the small one.",
+            "We'll need two, let's say three.",
+        ] {
+            XCTAssertEqual(CleanupLogic.minRatio(forRaw: raw), CleanupLogic.minRatioCorrection, raw)
+        }
+    }
+
+    /// The exclusion that keeps the relaxation narrow: a bare "no" is ordinary
+    /// content, and "actually"/"I mean" as emphasis still lower the floor — the
+    /// floor only widens what is ADMITTED, it never forces a rewrite.
+    func testOrdinaryContentKeepsTheStrictFloor() {
+        for raw in [
+            "There's no rush on this one at all.",
+            "No, I don't think that's going to work for us.",
+            "We have no idea what happened to the build.",
+            "The meeting is confirmed for Tuesday at 3 PM.",
+        ] {
+            XCTAssertEqual(CleanupLogic.minRatio(forRaw: raw), CleanupLogic.minRatio, raw)
+        }
+    }
+
+    /// A doubled "no" IS a correction marker; a single one is not.
+    func testDoubledNoIsACorrectionMarkerButASingleNoIsNot() {
+        XCTAssertEqual(CleanupLogic.minRatio(forRaw: "Bananas. No, no, oranges."),
+                       CleanupLogic.minRatioCorrection)
+        XCTAssertEqual(CleanupLogic.minRatio(forRaw: "Bananas. No no oranges."),
+                       CleanupLogic.minRatioCorrection)
+        XCTAssertEqual(CleanupLogic.minRatio(forRaw: "No, oranges are what we need here."),
+                       CleanupLogic.minRatio)
+    }
+
+    /// The relaxed floor is a floor, not a licence: an output that collapses to
+    /// nearly nothing is still rejected even with a marker present.
+    func testTheRelaxedFloorStillRejectsATotalCollapse() {
+        XCTAssertNil(CleanupLogic.acceptOutput(
+            raw: "Let's meet Thursday. No, no, wait, uh we'll meet Friday actually.",
+            cleaned: "Fri"))
+    }
+
+    /// Ordinary over-trimming on a raw with no marker is unaffected.
+    func testTheStrictFloorStillAppliesWithoutAMarker() {
+        XCTAssertNil(CleanupLogic.acceptOutput(
+            raw: "The meeting is confirmed for Tuesday at 3 PM in the main room.",
+            cleaned: "Tuesday."))
+    }
+
     // MARK: - runCleanup
 
     final class FakeEngine: CleanupCleaning {

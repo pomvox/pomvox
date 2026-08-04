@@ -56,7 +56,7 @@ final class MemoryTierTests: XCTestCase {
         XCTAssertEqual(MemoryTier.firstRunCleanupModel(physicalMemoryBytes: 64 * Self.gb),
                        MemoryTier.standardCleanupModel, "8B is offered, never auto-selected")
         XCTAssertEqual(MemoryTier.standardCleanupModel,
-                       "abhiram3040/simplewords-dictation-cleanup-v2")
+                       "abhiram3040/simplewords-dictation-cleanup-v3")
     }
 
     /// The 8-bit fine-tune is the larger of the two models (its footprint has not

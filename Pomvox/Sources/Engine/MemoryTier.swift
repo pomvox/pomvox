@@ -53,18 +53,35 @@ enum MemoryTier {
     /// fine-tune, 8-bit fused. It ships its own frozen prompt (see
     /// `CleanupPromptProfile`).
     ///
-    /// What is measured: `scripts/eval_cleanup_v2.py` scored 24/28 on the 28-case
-    /// ship gate (2026-07-27) with zero self-correction inversions — the failure
-    /// mode that disqualified v1 — and zero guard rejections on ordinary speech.
+    /// Why v3 (2026-08-03): v2 handled a self-correction only INSIDE one sentence
+    /// ("tuesday wait no friday"). Across a sentence boundary — "Let's meet
+    /// Thursday. No, no, wait, we'll meet Friday." — it kept the superseded
+    /// clause and pasted the wrong day. v3 was trained on a corpus built for that
+    /// gap. Both share one frozen prompt, so the corpus is the only variable.
+    ///
+    /// What is measured, by the MODEL author's held-out sets — NOT by anything in
+    /// this repo, which has no v3 harness (`scripts/eval_cleanup_v2.py` is pinned
+    /// to v2 and is the v2 gate's record): cross-sentence self-correction 122/122
+    /// vs v2's 15/77; must-not-correct negatives 30/30 vs 25/30; real human
+    /// disfluency (Disfl-QA, never trained on) 231/300 vs 27/300. What this repo
+    /// measures is `CleanupE2ETests`, which runs the shipped default through the
+    /// production path.
+    ///
+    /// Known regression, shipped deliberately: a chained triple correction in
+    /// lowercase unpunctuated form ("red one no the blue one actually the green
+    /// one") comes back unchanged — 43/44 on the intra-sentence set vs v2's
+    /// 44/44. It was anti-correlated with the cross-sentence gate across every
+    /// training checkpoint.
     ///
     /// What is NOT measured, and must not be claimed until it is: its resident
     /// footprint (the only recorded figure, 1.9 GB, is the on-disk snapshot size,
     /// which is not a footprint — no `vmmap` reading has been taken), and any
-    /// speed or quality ratio against Qwen3-4B. The committed harness hardcodes
-    /// this repo and the frozen recipe, so it structurally cannot produce a
-    /// Qwen3-4B baseline to compare against. Per CONTRIBUTING.md, a latency claim
-    /// here needs an on-device number behind it.
-    static let standardCleanupModel = "abhiram3040/simplewords-dictation-cleanup-v2"
+    /// speed or quality ratio against Qwen3-4B. Per CONTRIBUTING.md, a latency
+    /// claim here needs an on-device number behind it.
+    ///
+    /// Rollback is this one line back to `-v2`, which is still published and
+    /// still listed in `CleanupPromptProfile.frozenPromptIDs`.
+    static let standardCleanupModel = "abhiram3040/simplewords-dictation-cleanup-v3"
 
     /// The `[cleanup] model` default for the current machine when the key is
     /// absent: the smallest model that fits comfortably. A low-memory Mac gets

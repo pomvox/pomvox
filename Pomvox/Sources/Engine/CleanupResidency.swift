@@ -1,7 +1,7 @@
 import Foundation
 
 /// Idle-eviction policy for the cleanup LLM (item 5). The cleanup model — a
-/// GB-scale load (currently abhiram3040/simplewords-dictation-cleanup-v2, a
+/// GB-scale load (currently abhiram3040/simplewords-dictation-cleanup-v3, a
 /// Qwen3.5 fine-tune, ~2 GB) — is used in bursts, so it shouldn't sit resident
 /// 24/7: after it goes unused for `idleEvictS`, unload it and reload on next
 /// use. The small (~600 MB) STT model stays resident — this policy is
@@ -94,7 +94,7 @@ enum CleanupResidency {
 /// Identity of the prompt-prefix KV caches: valid for exactly one (model,
 /// dictionary-hint) pair. The caches are pure K/V tensors (~100 MB) derived
 /// from the prompt bytes, so they survive idle eviction of the cleanup
-/// model's GB-scale weights (currently abhiram3040/simplewords-dictation-cleanup-v2,
+/// model's GB-scale weights (currently abhiram3040/simplewords-dictation-cleanup-v3,
 /// ~2 GB) and stay valid across a reload of the SAME model — a mismatch on
 /// either field means the next `prepare()` must re-prefill.
 struct PrefixCacheKey: Equatable {
