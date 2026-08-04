@@ -7,6 +7,8 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 
 ## [Unreleased]
 
+## [0.2.3] — 2026-08-04
+
 ### Performance
 
 - **Cleanup is about 2.5× faster — roughly 1.5 s down to 0.6 s per dictation.**
@@ -52,6 +54,22 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
   spoken correction markers ("wait", "no, no", "scratch that", "I mean", …) and
   allows the larger cut on exactly those utterances. Ordinary speech is
   unaffected: a bare "no" ("There's no rush.") deliberately does not qualify.
+
+## [0.2.2] — 2026-07-30
+
+### Changed
+
+- **Cleanup now runs a model trained specifically for dictation cleanup.** On
+  16 GB+ Macs the default cleanup model moved from the general-purpose
+  Qwen3-4B to
+  [`abhiram3040/simplewords-dictation-cleanup-v2`](https://huggingface.co/abhiram3040/simplewords-dictation-cleanup-v2),
+  a fine-tune that ships its own frozen prompt alongside its weights. Machines
+  with 8 GB or less keep the compact general model, and any Hugging Face model
+  id remains valid in `[cleanup] model`.
+
+## [0.2.1] — 2026-07-29
+
+### Fixed
 
 - **Spoken lists now actually format — including numbered ones.** Saying
   "here's a list of to dos, one… two… three…" now comes out as a numbered
@@ -447,7 +465,10 @@ on Apple Silicon, shipping as a signed, notarized `Pomvox.dmg`.
 - **Python reference engine** (`src/pomvox/`) — the original app, now frozen as a
   runnable reference whose pure-logic modules are the cross-checked test spec.
 
-[Unreleased]: https://github.com/abhiram304/pomvox/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/abhiram304/pomvox/compare/v0.2.3...HEAD
+[0.2.3]: https://github.com/abhiram304/pomvox/compare/v0.2.2...v0.2.3
+[0.2.2]: https://github.com/abhiram304/pomvox/compare/v0.2.1...v0.2.2
+[0.2.1]: https://github.com/abhiram304/pomvox/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/abhiram304/pomvox/compare/v0.1.10...v0.2.0
 [0.1.10]: https://github.com/abhiram304/pomvox/compare/v0.1.9...v0.1.10
 [0.1.9]: https://github.com/abhiram304/pomvox/compare/v0.1.8...v0.1.9
