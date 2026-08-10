@@ -119,12 +119,12 @@ class HistoryConfig:
 
 @dataclass(frozen=True)
 class EngineConfig:
-    # The native Swift engine (Pomvox.app) is off by default and owned by the
+    # The native Swift engine (Pomvox.app) is on by default and owned by the
     # Hub, which reads/writes `[engine] native`. The Python engine ignores this
     # key entirely — it lives here only so config.toml round-trips cleanly (no
     # "unknown section" warning). Mutual exclusion is enforced at runtime by the
     # pidfile (pidfile.py), not by this flag.
-    native: bool = False
+    native: bool = True
 
 
 @dataclass(frozen=True)

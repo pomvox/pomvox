@@ -36,8 +36,8 @@ and [CONTRIBUTING.md](CONTRIBUTING.md) to get involved.
 > still ships in this repo as a runnable reference and the cross-checked test
 > spec (see [Two engines](#two-engines)). A signed, notarized download is
 > available on the [Releases page](https://github.com/abhiram304/pomvox/releases/latest);
-> you can also build from source. The native engine is **off by default** until
-> you enable it.
+> you can also build from source. The native engine is **on by default**; the
+> Python engine remains available as a fallback (see [Two engines](#two-engines)).
 
 ## Requirements
 

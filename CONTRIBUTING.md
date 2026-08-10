@@ -64,7 +64,7 @@ xcodebuild test -scheme Pomvox -derivedDataPath /tmp/pomvox-hub-dd \
   -destination 'platform=macOS'                       # build to /tmp, never iCloud Desktop
 ```
 
-The native engine (Settings ▸ *Native engine*, off by default) uses the
+The native engine (Settings ▸ *Native engine*, on by default) uses the
 Microphone, Input Monitoring, and Accessibility TCC permissions. macOS keys those
 grants to the app's *code identity*, so the build is signed with a stable, free,
 self-signed certificate rather than ad-hoc — otherwise every rebuild resets the

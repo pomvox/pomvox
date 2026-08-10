@@ -137,7 +137,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // The M7a inversion: `[engine] native` now means "arm on launch", not
         // just "the toggle's persisted value". Silent — at login a missing
         // grant becomes a menu-bar badge routing to Setup, never a dialog.
-        if doc.bool("engine", "native") ?? false {
+        // On by default: fresh installs (no persisted key) auto-arm native.
+        if doc.bool("engine", "native") ?? true {
             Task { await NativeEngine.shared.arm(interactive: false) }
         }
     }
