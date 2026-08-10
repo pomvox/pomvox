@@ -19,7 +19,7 @@ from xml.etree import ElementTree
 from xml.sax.saxutils import escape, quoteattr
 
 SPARKLE_NS = "http://www.sparkle-project.org/xml/rss/1.0/modules/sparkle"
-REPO = "abhiram304/pomvox"
+REPO = "pomvox/pomvox"
 
 
 def enclosure_url(tag: str, asset: str = "Pomvox.zip") -> str:

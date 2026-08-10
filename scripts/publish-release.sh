@@ -20,10 +20,10 @@
 # Env:     SIGN_KEY_FILE  file-based EdDSA key for --dry-run (never for real
 #                         releases — the real key lives in the Keychain)
 #
-# After this script: bump the Homebrew cask (abhiram304/homebrew-pomvox) —
+# After this script: bump the Homebrew cask (pomvox/homebrew-pomvox) —
 #   version, sha256 (shasum -a 256 dist/Pomvox.dmg), plus ONCE:
 #   `auto_updates true` and
-#   `livecheck do; url "https://raw.githubusercontent.com/abhiram304/pomvox/main/appcast.xml"; strategy :sparkle; end`
+#   `livecheck do; url "https://raw.githubusercontent.com/pomvox/pomvox/main/appcast.xml"; strategy :sparkle; end`
 #
 # Release checklist reminders (from the design spec):
 #   - MARKETING_VERSION and CURRENT_PROJECT_VERSION bumped in Pomvox/project.yml
@@ -139,7 +139,7 @@ say "Publishing the GitHub release FIRST (assets before appcast — no 404s)"
 gh release create "$TAG" "$DMG" "$ZIP" --title "Pomvox $SHORT" --generate-notes
 
 say "Waiting for the enclosure to serve HTTP 200"
-URL="https://github.com/abhiram304/pomvox/releases/download/$TAG/Pomvox.zip"
+URL="https://github.com/pomvox/pomvox/releases/download/$TAG/Pomvox.zip"
 for i in $(seq 1 30); do
   # Finding 5: a transient curl failure (DNS blip, connection reset) must not
   # kill the whole script under set -e — treat it as "not ready yet" and retry.
