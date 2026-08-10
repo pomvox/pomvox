@@ -83,7 +83,7 @@ targets:
         # mic. Only enforced under the Release hardened runtime; inert in
         # Debug. No sandbox.
         CODE_SIGN_ENTITLEMENTS: Pomvox.entitlements
-        INFOPLIST_KEY_NSHumanReadableCopyright: "© 2026 Abhi Ram Salammagari · MIT"
+        INFOPLIST_KEY_NSHumanReadableCopyright: "© 2026 Pomvox · MIT"
         INFOPLIST_KEY_LSApplicationCategoryType: "public.app-category.productivity"
         INFOPLIST_KEY_CFBundleDisplayName: Pomvox
         # Native engine (M4): shown when macOS prompts for the microphone.
