@@ -2,17 +2,27 @@
 <rss version="2.0" xmlns:sparkle="http://www.sparkle-project.org/xml/rss/1.0/modules/sparkle">
   <channel>
     <title>Pomvox</title>
-    <link>https://github.com/abhiram304/pomvox</link>
+    <link>https://github.com/pomvox/pomvox</link>
     <description>Pomvox release feed</description>
     <language>en</language>
+    <item>
+      <title>Version 0.2.4</title>
+      <pubDate>Mon, 10 Aug 2026 07:56:57 +0000</pubDate>
+      <sparkle:version>15</sparkle:version>
+      <sparkle:shortVersionString>0.2.4</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+      <sparkle:releaseNotesLink>https://github.com/pomvox/pomvox/releases/tag/v0.2.4</sparkle:releaseNotesLink>
+      <enclosure url="https://github.com/pomvox/pomvox/releases/download/v0.2.4/Pomvox.zip" length="14716862"
+                 type="application/octet-stream" sparkle:edSignature="2S4izc5XIwgRloWqv1jLwEVX3W5KV6bb48BS/bSWZaeMUSWj+F2r5UuKui9QXmbtn/ysg/rLTZH5CZmyWgdxBg=="/>
+    </item>
     <item>
       <title>Version 0.2.3</title>
       <pubDate>Tue, 04 Aug 2026 08:49:44 +0000</pubDate>
       <sparkle:version>14</sparkle:version>
       <sparkle:shortVersionString>0.2.3</sparkle:shortVersionString>
       <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-      <sparkle:releaseNotesLink>https://github.com/abhiram304/pomvox/releases/tag/v0.2.3</sparkle:releaseNotesLink>
-      <enclosure url="https://github.com/abhiram304/pomvox/releases/download/v0.2.3/Pomvox.zip" length="14648363"
+      <sparkle:releaseNotesLink>https://github.com/pomvox/pomvox/releases/tag/v0.2.3</sparkle:releaseNotesLink>
+      <enclosure url="https://github.com/pomvox/pomvox/releases/download/v0.2.3/Pomvox.zip" length="14648363"
                  type="application/octet-stream" sparkle:edSignature="QJUOjDQQoZzRgJo0r2fTBsZd+n51t7wSASHtpGv2SesXwnnOfvc1svOATM+JnNC7CtYy1SPcVaBBoqeKDVAKCQ=="/>
     </item>
     <item>
@@ -21,8 +31,8 @@
       <sparkle:version>13</sparkle:version>
       <sparkle:shortVersionString>0.2.2</sparkle:shortVersionString>
       <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-      <sparkle:releaseNotesLink>https://github.com/abhiram304/pomvox/releases/tag/v0.2.2</sparkle:releaseNotesLink>
-      <enclosure url="https://github.com/abhiram304/pomvox/releases/download/v0.2.2/Pomvox.zip" length="14649623"
+      <sparkle:releaseNotesLink>https://github.com/pomvox/pomvox/releases/tag/v0.2.2</sparkle:releaseNotesLink>
+      <enclosure url="https://github.com/pomvox/pomvox/releases/download/v0.2.2/Pomvox.zip" length="14649623"
                  type="application/octet-stream" sparkle:edSignature="zUCgSHeKfY95xntTJu6/4MXMLdqSF2NP/hStAP66qdIuKJxrRUpecSFvOHSwynbwCUlmyG2WLQJKHoy2fFavDw=="/>
     </item>
     <item>
@@ -31,8 +41,8 @@
       <sparkle:version>12</sparkle:version>
       <sparkle:shortVersionString>0.2.1</sparkle:shortVersionString>
       <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-      <sparkle:releaseNotesLink>https://github.com/abhiram304/pomvox/releases/tag/v0.2.1</sparkle:releaseNotesLink>
-      <enclosure url="https://github.com/abhiram304/pomvox/releases/download/v0.2.1/Pomvox.zip" length="14647249"
+      <sparkle:releaseNotesLink>https://github.com/pomvox/pomvox/releases/tag/v0.2.1</sparkle:releaseNotesLink>
+      <enclosure url="https://github.com/pomvox/pomvox/releases/download/v0.2.1/Pomvox.zip" length="14647249"
                  type="application/octet-stream" sparkle:edSignature="GAuyEP764KIBrOowu2hi0VJyCxKgw9XbSQ6NoTi/RmJiwfODS4CIuFebTb5PkDm3gdTaEWWPmaNp5kOoZ34KAw=="/>
     </item>
     <item>
@@ -41,8 +51,8 @@
       <sparkle:version>9</sparkle:version>
       <sparkle:shortVersionString>0.2.0</sparkle:shortVersionString>
       <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-      <sparkle:releaseNotesLink>https://github.com/abhiram304/pomvox/releases/tag/v0.2.0</sparkle:releaseNotesLink>
-      <enclosure url="https://github.com/abhiram304/pomvox/releases/download/v0.2.0/Pomvox.zip" length="14628983"
+      <sparkle:releaseNotesLink>https://github.com/pomvox/pomvox/releases/tag/v0.2.0</sparkle:releaseNotesLink>
+      <enclosure url="https://github.com/pomvox/pomvox/releases/download/v0.2.0/Pomvox.zip" length="14628983"
                  type="application/octet-stream" sparkle:edSignature="1BA4tg3pGqRYJSiszhycXfxHglwVmvd0kU57fRpYG1iksoxpAGNt7QODC31vQBWV4lX5PWRgo+cj72lpn2LwCA=="/>
     </item>
   </channel>
