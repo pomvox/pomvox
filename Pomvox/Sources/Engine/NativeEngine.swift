@@ -10,7 +10,7 @@ extension Notification.Name {
     static let pomvoxDictionaryHintApplied = Notification.Name("app.pomvox.dictionaryHintApplied")
 }
 
-/// The native dictation engine, off by default behind the "Native engine (beta)"
+/// The native dictation engine, on by default behind the "Native engine (beta)"
 /// toggle. M5 adds the live UX the Python HUD has: a never-steals-focus NSPanel
 /// HUD with two-tone streaming drafts (incremental re-transcription on a ~1 s
 /// cadence — M0 Result 2), a waveform and a VAD silence arc, hands-free mode

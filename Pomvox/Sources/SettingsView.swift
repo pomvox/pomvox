@@ -186,7 +186,7 @@ private struct NativeEngineGroup: View {
         SettingsGroup("Native engine (beta)") {
             SettingRow(
                 title: "Use the native engine",
-                desc: "Off by default. Hold Fn, speak, release — the transcript pastes on-device; with cleanup enabled the polished text pastes (raw on timeout). The Python engine stays your daily driver."
+                desc: "On by default. Hold Fn, speak, release — the transcript pastes on-device; with cleanup enabled the polished text pastes (raw on timeout). The Python engine stays your daily driver."
             ) {
                 SettingToggle(isOn: binding, label: "Use the native engine")
             }

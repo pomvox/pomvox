@@ -58,8 +58,8 @@ idle_evict_s = 300.0
 method = "paste"
 
 [engine]
-native = false  # the native Swift app's dictation engine. The app owns this
-                # toggle (Settings → Native engine); the Python engine ignores it.
+native = true  # the native Swift app's dictation engine. The app owns this
+               # toggle (Settings → Native engine); the Python engine ignores it.
 
 [log]
 file = true  # also write ~/.pomvox/pomvox.log
