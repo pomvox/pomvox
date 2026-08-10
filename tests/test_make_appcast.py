@@ -24,7 +24,7 @@ EMPTY = """<?xml version="1.0" encoding="utf-8"?>
 <rss version="2.0" xmlns:sparkle="http://www.sparkle-project.org/xml/rss/1.0/modules/sparkle">
   <channel>
     <title>Pomvox</title>
-    <link>https://github.com/abhiram304/pomvox</link>
+    <link>https://github.com/pomvox/pomvox</link>
     <description>Pomvox release feed</description>
     <language>en</language>
   </channel>
@@ -40,7 +40,7 @@ def make_item(build=9, short="0.1.11", sig="c2ln"):
 
 def test_enclosure_url():
     assert m.enclosure_url("v0.1.11") == \
-        "https://github.com/abhiram304/pomvox/releases/download/v0.1.11/Pomvox.zip"
+        "https://github.com/pomvox/pomvox/releases/download/v0.1.11/Pomvox.zip"
 
 
 def test_item_carries_versions_signature_and_min_system():
