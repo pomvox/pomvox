@@ -7,6 +7,18 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 
 ## [Unreleased]
 
+## [0.2.4] — 2026-08-10
+
+### Changed
+
+- **The native engine now arms on first launch instead of requiring an
+  explicit opt-in.** New installs get Pomvox's native Swift dictation engine
+  by default — hold Fn, speak, release, and the transcript pastes on-device.
+  Existing installs that already have `[engine] native` set in `config.toml`
+  are unaffected either way; only the fallback for a fresh config changed.
+  The frozen Python engine remains available as a fallback and is unaffected
+  by this change.
+
 ## [0.2.3] — 2026-08-04
 
 ### Performance
