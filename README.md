@@ -1,9 +1,9 @@
 # Pomvox
 
-[![Latest release](https://img.shields.io/github/v/release/abhiram304/pomvox?color=e2543a)](https://github.com/abhiram304/pomvox/releases/latest)
+[![Latest release](https://img.shields.io/github/v/release/pomvox/pomvox?color=e2543a)](https://github.com/pomvox/pomvox/releases/latest)
 [![Platform](https://img.shields.io/badge/platform-macOS%2014%2B%20%7C%20Apple%20Silicon-informational)](#requirements)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Downloads](https://img.shields.io/github/downloads/abhiram304/pomvox/total?color=555)](https://github.com/abhiram304/pomvox/releases)
+[![Downloads](https://img.shields.io/github/downloads/pomvox/pomvox/total?color=555)](https://github.com/pomvox/pomvox/releases)
 
 Fully local, privacy-first voice dictation for macOS on Apple Silicon. Hold a
 hotkey, speak, and the transcript is inserted into whatever text field is
@@ -35,7 +35,7 @@ and [CONTRIBUTING.md](CONTRIBUTING.md) to get involved.
 > Swift app. The native app is the daily driver; the original Python engine
 > still ships in this repo as a runnable reference and the cross-checked test
 > spec (see [Two engines](#two-engines)). A signed, notarized download is
-> available on the [Releases page](https://github.com/abhiram304/pomvox/releases/latest);
+> available on the [Releases page](https://github.com/pomvox/pomvox/releases/latest);
 > you can also build from source. The native engine is **on by default**; the
 > Python engine remains available as a fallback (see [Two engines](#two-engines)).
 
@@ -52,17 +52,17 @@ and [CONTRIBUTING.md](CONTRIBUTING.md) to get involved.
 ### Homebrew
 
 ```sh
-brew install --cask abhiram304/pomvox/pomvox
+brew install --cask pomvox/pomvox/pomvox
 ```
 
-This taps [`abhiram304/homebrew-pomvox`](https://github.com/abhiram304/homebrew-pomvox)
+This taps [`pomvox/homebrew-pomvox`](https://github.com/pomvox/homebrew-pomvox)
 and installs the same notarized `Pomvox.app` into `/Applications`. Upgrade later
 with `brew upgrade --cask pomvox`.
 
 ### Direct download
 
 Grab the latest **notarized** `Pomvox.dmg` from the
-[Releases page](https://github.com/abhiram304/pomvox/releases/latest), open it,
+[Releases page](https://github.com/pomvox/pomvox/releases/latest), open it,
 and drag **Pomvox** to Applications. It's signed with a Developer ID and notarized
 by Apple, so it opens with no right-click dance.
 
