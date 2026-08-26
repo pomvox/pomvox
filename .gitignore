@@ -36,3 +36,4 @@ Pomvox/Info.plist
 
 # Internal milestone build-prompts — not part of the published project
 docs/prompts/
+.spm/

@@ -84,6 +84,24 @@ final class SettingsStoreTests: XCTestCase {
         XCTAssertEqual(SettingsIO.read(doc), v)
     }
 
+    func testDictationMarkRoundTrips() {
+        var v = SettingsValues.defaults
+        v.signatureEnabled = true
+        v.signatureMark = "✨"
+        var doc = ConfigDocument(text: "")
+        SettingsIO.applyAll(v, to: &doc)
+        let back = SettingsIO.read(doc)
+        XCTAssertTrue(back.signatureEnabled)
+        XCTAssertEqual(back.signatureMark, "✨")
+        // What the settings pane writes is what the engine reads.
+        XCTAssertEqual(Signature.read(doc), Signature(enabled: true, mark: "✨"))
+    }
+
+    func testDictationMarkDefaultsOff() {
+        XCTAssertFalse(SettingsValues.defaults.signatureEnabled)
+        XCTAssertFalse(Signature.read(ConfigDocument(text: "")).enabled)
+    }
+
     func testQuickAddHotkeyRoundTrips() {
         var v = SettingsValues.defaults
         XCTAssertEqual(v.quickAdd, "")

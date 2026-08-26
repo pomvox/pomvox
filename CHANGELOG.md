@@ -7,6 +7,24 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 
 ## [Unreleased]
 
+## [0.2.5] — 2026-08-25
+
+### Added
+
+- **An optional mark on every dictation.** Turn on *Settings → General →
+  Dictation mark* and each dictation ends with one emoji of your choosing
+  (`🎙️`, `🗣️`, `✨`, `💬`, `🎧` or `🪶`; any emoji works if you set
+  `[signature] mark` by hand) — so a post can show it was spoken rather than
+  typed, without typing that yourself. Off by default and never turned on by an
+  upgrade: adding characters to your words is the one thing this app shouldn't
+  do behind your back, so it happens only where you asked for it.
+
+  The mark is applied last — after cleanup and after your dictionary
+  replacements — so it can't become input the cleanup model or a replacement
+  rule acts on. Blank dictations are never marked, and re-inserting a past
+  dictation from History pastes the mark once, not twice. Flipping the toggle
+  takes effect on your next dictation; no re-arm.
+
 ## [0.2.4] — 2026-08-10
 
 ### Changed
@@ -477,7 +495,9 @@ on Apple Silicon, shipping as a signed, notarized `Pomvox.dmg`.
 - **Python reference engine** (`src/pomvox/`) — the original app, now frozen as a
   runnable reference whose pure-logic modules are the cross-checked test spec.
 
-[Unreleased]: https://github.com/abhiram304/pomvox/compare/v0.2.3...HEAD
+[Unreleased]: https://github.com/pomvox/pomvox/compare/v0.2.5...HEAD
+[0.2.5]: https://github.com/pomvox/pomvox/compare/v0.2.4...v0.2.5
+[0.2.4]: https://github.com/pomvox/pomvox/compare/v0.2.3...v0.2.4
 [0.2.3]: https://github.com/abhiram304/pomvox/compare/v0.2.2...v0.2.3
 [0.2.2]: https://github.com/abhiram304/pomvox/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/abhiram304/pomvox/compare/v0.2.0...v0.2.1

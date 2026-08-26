@@ -53,6 +53,9 @@ enum SettingsSchema {
 
     static let cleanupStyles = ["light", "polish"]
     static let hudPositions = ["bottom-center", "top-center", "notch"]
+    /// One-click marks for the opt-in dictation mark. `[signature] mark` stays
+    /// free text in the file — these are the choices the UI offers.
+    static let signatureMarks = Signature.presets
 
     // Curated suggestions only — the field stays free text so any MLX model id
     // works (open-source-first; never lock out an arbitrary id).

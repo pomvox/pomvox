@@ -8,6 +8,10 @@ extension Notification.Name {
     /// Posted by the engine when a changed words-hint has been re-baked into
     /// the cleanup prefix caches (drives the page's "applying…" indicator).
     static let pomvoxDictionaryHintApplied = Notification.Name("app.pomvox.dictionaryHintApplied")
+    /// Posted by SettingsModel after a successful save. Most keys are
+    /// snapshotted at arm() by contract; the engine listens so the handful that
+    /// must feel instant (the dictation mark) take effect on the next utterance.
+    static let pomvoxSettingsDidChange = Notification.Name("app.pomvox.settingsDidChange")
 }
 
 /// The native dictation engine, on by default behind the "Native engine (beta)"
@@ -120,6 +124,12 @@ final class NativeEngine: ObservableObject {
     // the final text just before paste, even when cleanup is off/timed out.
     private var dictionary = PomvoxDictionary(words: [], replacements: [])
 
+    // [signature] snapshot: the opt-in emoji appended to the final text. Read
+    // at arm() like the rest, but also hot-reloaded on every Settings save —
+    // it's a toggle people flip per-post, so waiting for a re-arm would read
+    // as broken. Off unless the user turned it on.
+    private var signature = Signature()
+
     // HUD + bus (the bus is thread-safe; its drain renders on the main actor).
     private let hud: HudController
     private nonisolated let bus: HudBus
@@ -167,6 +177,11 @@ final class NativeEngine: ObservableObject {
             forName: .pomvoxDictionaryDidChange, object: nil, queue: .main
         ) { [weak self] _ in
             MainActor.assumeIsolated { self?.reloadDictionary() }
+        }
+        NotificationCenter.default.addObserver(
+            forName: .pomvoxSettingsDidChange, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.reloadSignature() }
         }
     }
 
@@ -685,6 +700,8 @@ final class NativeEngine: ObservableObject {
             dictionaryPath: DictionaryPaths.dictionaryPath())
         dictionary = PomvoxDictionary(file: loaded.file, enabled: dictEnabled)
 
+        signature = Signature.read(doc)
+
         vadEnabled = doc.bool("vad", "enabled") ?? true
         let detector = EndpointDetector(
             silenceMs: doc.int("vad", "silence_ms") ?? 2000,
@@ -694,6 +711,17 @@ final class NativeEngine: ObservableObject {
         let ep = Endpointer(backend: EnergyGateBackend(), detector: detector,
                             maxSessionS: doc.double("vad", "max_session_s") ?? 600.0)
         vadLock.lock(); endpointer = ep; vadLock.unlock()
+    }
+
+    /// Hot-apply a `[signature]` edit (posted by SettingsModel on every save).
+    /// Takes effect on the next utterance — the mark is applied post-paste-path
+    /// to the finished text, so there's nothing to rebuild.
+    func reloadSignature() {
+        let next = Signature.read(ConfigDocument.load(path: configPath))
+        guard next != signature else { return }
+        signature = next
+        NSLog("pomvox-engine: dictation mark %@",
+              next.enabled ? "on (\(next.mark))" : "off")
     }
 
     /// Hot-apply a dictionary edit (posted by DictionaryStore on every save).
@@ -877,6 +905,7 @@ final class NativeEngine: ObservableObject {
         let timeoutS = cleanupTimeoutS
         let store = history
         let dict = dictionary
+        let sig = signature
         let durationS = Double(samples.count) / 16000.0
         // Report the model that actually loaded (canonical id), not the raw
         // config string — an unrecognized value fell back to the default.
@@ -918,6 +947,12 @@ final class NativeEngine: ObservableObject {
             // (mirrors app.py). `final_text` stored in history reflects them.
             let applied = dict.applyReporting(text)
             text = applied.text
+            // The dictation mark goes on last — after cleanup and after the
+            // custom-word fixups — so it decorates the finished text and can
+            // never become input the LLM or a replacement rule acts on. Stored
+            // in history as part of `final_text`, so a re-insert pastes exactly
+            // what was pasted the first time (`apply` is idempotent).
+            text = sig.apply(to: text)
             let (appHint, pastedAt): (String?, Double?) = await MainActor.run {
                 guard !text.isEmpty else {
                     let peak = peakDbfs(samples)

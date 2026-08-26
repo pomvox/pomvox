@@ -140,6 +140,25 @@ private struct GeneralPane: View {
                     }
                 }
             }
+            SettingsGroup("Dictation mark") {
+                SettingRow(
+                    title: "Mark every dictation",
+                    desc: "Adds one emoji to the end of what you dictate — so a post can "
+                        + "show it was spoken, not typed. Off unless you turn it on."
+                ) {
+                    SettingToggle(isOn: $model.values.signatureEnabled,
+                                  label: "Mark every dictation")
+                }
+                RowDivider()
+                SettingRow(title: "Mark", desc: markPreview) {
+                    SegmentControl(
+                        options: SettingsSchema.signatureMarks.map { (value: $0, label: $0) },
+                        selection: $model.values.signatureMark,
+                        accessibilityLabel: "Dictation mark")
+                        .disabled(!model.values.signatureEnabled)
+                        .opacity(model.values.signatureEnabled ? 1 : 0.45)
+                }
+            }
             SettingsGroup("On-screen HUD") {
                 SettingRow(title: "Show HUD") {
                     SettingToggle(isOn: $model.values.hudEnabled, label: "Show HUD")
@@ -165,6 +184,15 @@ private struct GeneralPane: View {
                 UpdatesGroup()
             }
         }
+    }
+
+    /// Shows the mark where it actually lands, so the setting is self-evident.
+    private var markPreview: String {
+        let sig = Signature(enabled: model.values.signatureEnabled,
+                            mark: model.values.signatureMark)
+        return sig.enabled
+            ? "Pasted as: \(sig.apply(to: "Shipped the new build."))"
+            : "Turn the toggle on to add a mark."
     }
 }
 
