@@ -45,10 +45,20 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Select latest stable Xcode
+      # Pinned, not latest-stable. An Xcode after 26.3 fails the build with
+      # "Multiple commands produce .../Debug/include/module.modulemap": the
+      # Pomvox and PomvoxTests targets each run ProcessXCFramework for
+      # swift-tokenizers' TokenizersRust.xcframework, and the newer toolchain
+      # rejects the duplicate output that older ones tolerated. Nothing in this
+      # repo changed — main simply went 15 days without a CI run (last green
+      # 2026-08-10) while the runner's latest-stable moved underneath it, so
+      # the first PR after that gap ate the breakage. 26.3 is the toolchain the
+      # v0.2.5 release was built and notarized with. Unpin once the duplicate
+      # xcframework copy is fixed properly (tracked in the CI-health issue).
+      - name: Select the pinned Xcode
         uses: maxim-lobanov/setup-xcode@v1
         with:
-          xcode-version: latest-stable
+          xcode-version: '26.3'
 
       - name: Print toolchain
         run: xcodebuild -version && swift --version
