@@ -112,7 +112,12 @@ targets:
         # maintainer's Keychain; SUAutomaticallyUpdate NO = install only on
         # user click; SUVerifyUpdateBeforeExtraction = refuse bad signatures
         # before unpacking a byte.
-        SUFeedURL: https://raw.githubusercontent.com/abhiram304/pomvox/main/appcast.xml
+        # Must be the pomvox org, not the pre-move abhiram304 path. Every build
+        # bakes this URL in permanently — a shipped copy can never be repointed —
+        # and the old path only resolves via GitHub's rename redirect, which one
+        # org settings change would remove, silently ending updates for everyone
+        # running that build. Both paths serve byte-identical appcasts today.
+        SUFeedURL: https://raw.githubusercontent.com/pomvox/pomvox/main/appcast.xml
         SUPublicEDKey: EY7D5pzhZlKZgoC0ySSy8j1UmrzQ3NSz1zI9UfStWfI=
         SUEnableAutomaticChecks: true
         SUAutomaticallyUpdate: false
