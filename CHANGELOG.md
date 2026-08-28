@@ -7,6 +7,22 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 
 ## [Unreleased]
 
+### Fixed
+
+- **Dictation could stop working entirely after a reboot, with no way to
+  recover but deleting a file by hand.** Pomvox records the running engine's
+  pid in `~/.pomvox/engine.pid` so the native and Python engines can never
+  both hold the event tap. If the app was terminated without releasing that
+  file — a restart or a force quit — the pid it named could be handed out to
+  an unrelated system process on the next boot. The stale lock then read as a
+  live engine forever: Fn did nothing, no HUD appeared, nothing was
+  transcribed, and quitting and reopening Pomvox could not help, because the
+  app only ever removes a lock file it still owns. The pidfile now records
+  which executable claimed it and verifies the pid is still running that same
+  program, so a recycled pid is recognised as stale and reclaimed. Fixed in
+  both engines. The "blocked" log line and status message now name the pid and
+  the executable holding the lock.
+
 ## [0.2.4] — 2026-08-10
 
 ### Changed
