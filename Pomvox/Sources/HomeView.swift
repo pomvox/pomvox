@@ -15,7 +15,7 @@ struct HomeView: View {
                     greeting.padding(.bottom, 26)
 
                     if model.rows.isEmpty {
-                        EmptyState(hasDatabase: model.hasDatabase)
+                        EmptyState(hasDatabase: model.hasDatabase, failed: model.loadFailed)
                     } else {
                         cards.padding(.bottom, 30)
                         SectionHeader(title: "Activity", sub: "last 30 days")
@@ -131,16 +131,34 @@ struct SectionHeader: View {
 
 struct EmptyState: View {
     let hasDatabase: Bool
+    /// A failed read is NOT an empty history — say so, or the user reads the
+    /// blank page as "Pomvox deleted my dictations".
+    var failed: Bool = false
+
     var body: some View {
         VStack(spacing: 12) {
-            Waveform().scaleEffect(1.6).frame(height: 40)
-            Text("No dictations yet").font(Typo.display(20)).foregroundStyle(Palette.ink).padding(.top, 8)
-            Text(hasDatabase
-                 ? "Hold Fn and speak — your dictations will appear here, and nowhere else."
-                 : "Start Pomvox and dictate once. Everything is stored on this Mac, at ~/.pomvox/history.db.")
+            if failed {
+                Image(systemName: "exclamationmark.triangle")
+                    .font(.system(size: 30, weight: .light)).foregroundStyle(Palette.muted)
+            } else {
+                Waveform().scaleEffect(1.6).frame(height: 40)
+            }
+            Text(failed ? "Couldn't read your history" : "No dictations yet")
+                .font(Typo.display(20)).foregroundStyle(Palette.ink).padding(.top, 8)
+            Text(message)
                 .font(Typo.ui(13)).foregroundStyle(Palette.muted)
                 .multilineTextAlignment(.center).frame(maxWidth: 360)
         }
         .frame(maxWidth: .infinity).padding(.top, 60)
+    }
+
+    private var message: String {
+        if failed {
+            return "Your dictations are still on disk at ~/.pomvox/history.db — "
+                + "this is a read error, nothing was deleted. Reopening Pomvox usually clears it."
+        }
+        return hasDatabase
+            ? "Hold Fn and speak — your dictations will appear here, and nowhere else."
+            : "Start Pomvox and dictate once. Everything is stored on this Mac, at ~/.pomvox/history.db."
     }
 }

@@ -194,4 +194,64 @@ final class HistoryReaderTests: XCTestCase {
         let path = try makeDB(fixture())
         XCTAssertNil(HistoryReader(path: path).lifetimeTotals())
     }
+
+    // MARK: - reading a WAL database (the 2026-08-27 "empty history" bug)
+
+    /// The engine keeps the database in WAL mode, and a clean quit checkpoints
+    /// and deletes the `-wal`/`-shm` sidecars. A `SQLITE_OPEN_READONLY`
+    /// connection cannot recreate them, so every query failed and the Hub drew
+    /// an empty history — indistinguishable from a wiped database.
+    func testReadsAWalDatabaseAfterItsSidecarsAreGone() throws {
+        let path = NSTemporaryDirectory() + "pomvox-wal-\(UUID().uuidString).db"
+        defer {
+            for suffix in ["", "-wal", "-shm"] {
+                try? FileManager.default.removeItem(atPath: path + suffix)
+            }
+        }
+        let store = try XCTUnwrap(HistoryStore(path: path, retentionDays: 7))
+        store.add(ts: 1.0, rawText: "r", finalText: "one two three",
+                  cleanupStatus: "ok", timingsJson: "")
+        store.close()
+        // Whatever the close left behind, ensure the sidecars are absent — that
+        // is the on-disk state the failure needs.
+        for suffix in ["-wal", "-shm"] {
+            try? FileManager.default.removeItem(atPath: path + suffix)
+        }
+
+        let outcome = HistoryReader(path: path).loadOutcome()
+        XCTAssertFalse(outcome.failed, "a WAL database with no sidecars must still read")
+        XCTAssertEqual(outcome.rows.count, 1)
+        XCTAssertEqual(outcome.rows.first?.final, "one two three")
+    }
+
+    /// The invariant that matters most. A failed read must report itself: a
+    /// silent `.rows([])` renders as "No dictations yet", and a user reads that
+    /// as their history having been deleted.
+    func testUnreadableDatabaseIsReportedNotRenderedAsEmpty() throws {
+        let path = NSTemporaryDirectory() + "pomvox-garbage-\(UUID().uuidString).db"
+        defer { try? FileManager.default.removeItem(atPath: path) }
+        try "this is not a sqlite database".write(
+            toFile: path, atomically: true, encoding: .utf8)
+
+        let outcome = HistoryReader(path: path).loadOutcome()
+        XCTAssertEqual(outcome, .unreadable)
+        XCTAssertTrue(outcome.failed)
+        XCTAssertTrue(outcome.rows.isEmpty)
+    }
+
+    /// A fresh install is not a failure — it must not show the error copy.
+    func testMissingDatabaseIsNoDatabaseNotAFailure() {
+        let path = NSTemporaryDirectory() + "pomvox-absent-\(UUID().uuidString).db"
+        let outcome = HistoryReader(path: path).loadOutcome()
+        XCTAssertEqual(outcome, .noDatabase)
+        XCTAssertFalse(outcome.failed)
+        XCTAssertTrue(outcome.rows.isEmpty)
+    }
+
+    /// `load()` keeps its old rows-only shape for callers that don't branch.
+    func testLoadStillReturnsRowsOnly() throws {
+        let path = try makeDB(fixture())
+        defer { try? FileManager.default.removeItem(atPath: path) }
+        XCTAssertEqual(HistoryReader(path: path).load().count, 5)
+    }
 }
