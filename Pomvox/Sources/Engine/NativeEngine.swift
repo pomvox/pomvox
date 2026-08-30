@@ -208,9 +208,14 @@ final class NativeEngine: ObservableObject {
     func arm(interactive: Bool = true) async {
         guard !isArmed else { return }
         if let holder = pidfile.acquire("native") {
-            NSLog("pomvox-engine: blocked by %@ engine", holder.name)
+            // Name the pid and the executable: a bare "blocked by native engine"
+            // is what made the 2026-08-27 stale-pidfile outage undiagnosable
+            // from the log alone.
+            NSLog("pomvox-engine: blocked by %@ engine (pid %d, %@)",
+                  holder.name, holder.pid, holder.execPath ?? "path unknown")
             status = .blocked(
-                "Pomvox's \(holder.name) engine is running — quit it before enabling the native engine.")
+                "Pomvox's \(holder.name) engine (pid \(holder.pid)) is running — quit it "
+                + "before enabling the native engine.")
             TelemetryClient.shared.emit(.error, props: errorProps("engine_blocked"))
             return
         }

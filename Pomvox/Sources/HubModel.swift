@@ -9,13 +9,18 @@ final class HubModel: ObservableObject {
     @Published private(set) var stats: HubStats = .empty
     @Published private(set) var heatmap: [HeatmapCell] = []
     @Published private(set) var hasDatabase: Bool = false
+    /// The database is there but could not be read. Distinct from "no rows":
+    /// the views must never show an empty history for a failed read.
+    @Published private(set) var loadFailed: Bool = false
 
     private let reader = HistoryReader()
     private let writer = HistoryWriter()
 
     func reload() {
         hasDatabase = reader.databaseExists
-        let loaded = reader.load()
+        let outcome = reader.loadOutcome()
+        loadFailed = outcome.failed
+        let loaded = outcome.rows
         let nowDate = Date()
         rows = loaded
         var s = reader.stats(rows: loaded, now: nowDate)

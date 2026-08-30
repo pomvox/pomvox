@@ -66,7 +66,7 @@ struct TelemetryStore {
 
 // MARK: - Events (typed, allowlisted scalars only — no free-text field exists)
 
-enum TelemetryEventName: String, Sendable {
+enum TelemetryEventName: String, Codable, Sendable {
     case appLaunch = "app_launch"
     case dictationCompleted = "dictation_completed"
     case cleanupUsed = "cleanup_used"
@@ -78,7 +78,7 @@ enum TelemetryEventName: String, Sendable {
 
 /// The complete set of properties an event may carry. There is deliberately no
 /// `String: Any` here: a transcript, file path, or email has nowhere to go.
-struct TelemetryProps: Equatable, Sendable {
+struct TelemetryProps: Equatable, Codable, Sendable {
     var durationMs: Int?
     var sttModel: String?
     var cleanup: Bool?
@@ -106,7 +106,7 @@ extension TelemetryProps {
     }
 }
 
-struct TelemetryEvent: Equatable, Sendable {
+struct TelemetryEvent: Equatable, Codable, Sendable {
     let event: TelemetryEventName
     let ts: Int                  // epoch milliseconds
     var props: TelemetryProps = TelemetryProps()
@@ -228,6 +228,15 @@ struct TelemetryQueue: Sendable {
         self.maxBatch = maxBatch
     }
 
+    /// Rehydrate from a previous run. Still trimmed to `cap`, so a restored
+    /// queue can never exceed the bound a live one respects.
+    init(restoring events: [TelemetryEvent], cap: Int = 200, maxBatch: Int = 50) {
+        self.cap = cap
+        self.maxBatch = maxBatch
+        self.events = events
+        trim()
+    }
+
     var isEmpty: Bool { events.isEmpty }
 
     mutating func enqueue(_ e: TelemetryEvent) {
@@ -251,8 +260,67 @@ struct TelemetryQueue: Sendable {
         trim()
     }
 
+    /// Drop everything pending. Used when consent is withdrawn.
+    mutating func removeAll() { events.removeAll() }
+
     private mutating func trim() {
         if events.count > cap { events.removeFirst(events.count - cap) }
+    }
+}
+
+
+// MARK: - Queue persistence (survives quit)
+
+/// UserDefaults-backed persistence for the *pending* queue.
+///
+/// Without this the queue lives only in the actor, so quitting inside the ~2 s
+/// flush debounce -- or while offline with a batch requeued after a retryable
+/// failure -- silently loses those events. Nothing new is written that a flush
+/// would not already have sent: `TelemetryEvent` is the same content-free set of
+/// typed scalars, and it is dropped the moment consent is withdrawn.
+///
+/// The encoding here is Swift's synthesized `Codable` (camelCase keys), which is
+/// deliberately *not* the wire contract -- `TelemetryEncoder` still owns that and
+/// still sanitizes at the boundary. This is a private on-disk format, free to
+/// change, and unreadable input is discarded rather than trusted.
+struct TelemetryQueueStore {
+    static let queueKey = "telemetry.pendingQueue"
+    static let versionKey = "telemetry.pendingQueue.appVersion"
+
+    let defaults: UserDefaults
+    init(defaults: UserDefaults = .standard) { self.defaults = defaults }
+
+    /// Restore the queue recorded by a previous run of *this* app version.
+    ///
+    /// Events carry no version of their own -- the batch envelope stamps whatever
+    /// `TelemetryEnv` is current at flush time. So events queued on 0.2.4 and
+    /// flushed after an update to 0.2.5 would be reported as 0.2.5, quietly
+    /// mis-attributing an install to a version that never ran. Dropping a handful
+    /// of events across an update boundary is the cheaper error: the install
+    /// still reports on its next launch, and per-version counts stay honest.
+    func load(appVersion: String) -> [TelemetryEvent] {
+        guard defaults.string(forKey: Self.versionKey) == appVersion,
+              let data = defaults.data(forKey: Self.queueKey),
+              let events = try? JSONDecoder().decode([TelemetryEvent].self, from: data)
+        else {
+            clear()
+            return []
+        }
+        return events
+    }
+
+    func save(_ events: [TelemetryEvent], appVersion: String) {
+        guard !events.isEmpty, let data = try? JSONEncoder().encode(events) else {
+            clear()
+            return
+        }
+        defaults.set(data, forKey: Self.queueKey)
+        defaults.set(appVersion, forKey: Self.versionKey)
+    }
+
+    func clear() {
+        defaults.removeObject(forKey: Self.queueKey)
+        defaults.removeObject(forKey: Self.versionKey)
     }
 }
 
@@ -319,17 +387,24 @@ actor TelemetryClient {
     private let env: TelemetryEnv
     private let now: @Sendable () -> Int
     private let sender: Sender
+    private let persist: @Sendable ([TelemetryEvent]) -> Void
     private var flushTask: Task<Void, Never>?
 
+    /// `persist` is called with the full pending queue after every change, so a
+    /// quit cannot lose what the ~2 s debounce hasn't flushed yet. It defaults to
+    /// a no-op, which keeps the client pure for tests; `shared` injects the
+    /// UserDefaults-backed store.
     init(endpoint: URL?, enabled: @escaping @Sendable () -> Bool, env: TelemetryEnv,
          now: @escaping @Sendable () -> Int, sender: @escaping Sender,
-         queue: TelemetryQueue = TelemetryQueue()) {
+         queue: TelemetryQueue = TelemetryQueue(),
+         persist: @escaping @Sendable ([TelemetryEvent]) -> Void = { _ in }) {
         self.endpoint = endpoint
         self.isEnabled = enabled
         self.env = env
         self.now = now
         self.sender = sender
         self.queue = queue
+        self.persist = persist
     }
 
     /// The process-wide client. Reads consent fresh from UserDefaults on every
@@ -337,19 +412,34 @@ actor TelemetryClient {
     static let shared: TelemetryClient = {
         var store = TelemetryStore()
         let id = store.installID()
+        let queueStore = TelemetryQueueStore()
+        let appVersion = TelemetryEnvBuilder.appVersion()
         return TelemetryClient(
             endpoint: productionEndpoint,
             enabled: { TelemetryStore().maySend },
             env: TelemetryEnvBuilder.current(installID: id),
             now: { Int(Date().timeIntervalSince1970 * 1000) },
-            sender: TelemetryClient.urlSessionSender)
+            sender: TelemetryClient.urlSessionSender,
+            queue: TelemetryQueue(restoring: queueStore.load(appVersion: appVersion)),
+            persist: { queueStore.save($0, appVersion: appVersion) })
     }()
 
     // MARK: enqueue
 
-    /// Pure enqueue (used by tests). Production uses `emit`, which also schedules
-    /// a debounced flush so back-to-back events batch into one POST.
-    func record(_ event: TelemetryEvent) { queue.enqueue(event) }
+    /// Enqueue and persist, without scheduling a flush (used by tests).
+    /// Production uses `emit`, which also schedules a debounced flush so
+    /// back-to-back events batch into one POST.
+    func record(_ event: TelemetryEvent) {
+        queue.enqueue(event)
+        persist(queue.events)
+    }
+
+    /// Drop everything pending, on disk included. Called when consent is
+    /// withdrawn: events queued while granted must not outlive a "No thanks".
+    func forget() {
+        queue.removeAll()
+        persist(queue.events)
+    }
 
     /// Fire-and-forget entry from any context. Never blocks the caller; the
     /// gate makes it a true no-op when consent isn't granted or no endpoint is set.
@@ -362,7 +452,7 @@ actor TelemetryClient {
         // `.denied` session never accumulates events that could leak on a later
         // "Share". (flush() re-checks too, as defense in depth.)
         guard isEnabled() else { return }
-        queue.enqueue(TelemetryEvent(event: name, ts: now(), props: props))
+        record(TelemetryEvent(event: name, ts: now(), props: props))
         scheduleFlush()
     }
 
@@ -389,13 +479,16 @@ actor TelemetryClient {
             guard !batch.isEmpty else { break }
             guard let data = try? TelemetryEncoder.encodeBatch(env: env, events: batch),
                   data.count <= 64_000 else {
+                persist(queue.events)
                 continue   // unencodable or over the 64 KB limit → drop this batch
             }
             switch await sender(endpoint, data) {
             case .success, .permanentFailure:
+                persist(queue.events)
                 continue   // done, or unrecoverable — either way, drop it
             case .retryableFailure:
                 queue.requeueFront(batch)
+                persist(queue.events)
                 return     // stop now; a later flush retries (dedup makes it safe)
             }
         }

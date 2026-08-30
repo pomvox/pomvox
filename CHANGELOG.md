@@ -7,7 +7,7 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 
 ## [Unreleased]
 
-## [0.2.5] — 2026-08-25
+## [0.2.5] — 2026-08-30
 
 ### Added
 
@@ -24,6 +24,52 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
   rule acts on. Blank dictations are never marked, and re-inserting a past
   dictation from History pastes the mark once, not twice. Flipping the toggle
   takes effect on your next dictation; no re-arm.
+
+### Fixed
+
+- **Dictation could stop working entirely after a reboot, with no way to
+  recover but deleting a file by hand.** Pomvox records the running engine's
+  pid in `~/.pomvox/engine.pid` so the native and Python engines can never
+  both hold the event tap. If the app was terminated without releasing that
+  file — a restart or a force quit — the pid it named could be handed out to
+  an unrelated system process on the next boot. The stale lock then read as a
+  live engine forever: Fn did nothing, no HUD appeared, nothing was
+  transcribed, and quitting and reopening Pomvox could not help, because the
+  app only ever removes a lock file it still owns. The pidfile now records
+  which executable claimed it and verifies the pid is still running that same
+  program, so a recycled pid is recognised as stale and reclaimed. Fixed in
+  both engines. The "blocked" log line and status message now name the pid and
+  the executable holding the lock.
+
+- **Opting in, dictating once and quitting straight away reported nothing.**
+  Anonymous usage events lived only in memory, so quitting inside the ~2 s
+  flush window — or while offline, with a batch requeued after a failed send —
+  dropped them silently. The pending queue now survives a quit. Nothing new is
+  recorded: it is the same content-free set of counters, still gated on
+  consent, and withdrawing consent now erases the queue on disk as well as in
+  memory.
+
+- **Setup could send you to a System Settings pane that doesn't list Pomvox.**
+  macOS only offers the Input Monitoring prompt while the permission is still
+  undecided, so once a prompt had been dismissed, clicking *Grant* opened a
+  list Pomvox wasn't in, with nothing on screen to say what to do next. That
+  row now explains the fix — add Pomvox with the `+` button and relaunch — or,
+  if the app is running from a disk image or outside /Applications, says to
+  move it there first, since macOS ties permissions to where an app lives and
+  a copy launched from a DMG can't hold that grant at all.
+
+- **The History page could show "No dictations yet" when nothing had been
+  deleted.** Pomvox's engine keeps `~/.pomvox/history.db` in SQLite WAL mode,
+  which needs its `-wal` sidecar file to be readable. The Hub opened the
+  database strictly read-only, and a read-only connection cannot recreate that
+  sidecar — so if the Hub read before the engine had reopened the database
+  (a clean quit removes the sidecar), every query failed and History and the
+  Home dashboard rendered as though the database were empty. Nothing was ever
+  deleted, but an empty list is a frightening thing to be shown. The Hub now
+  opens the database in a mode that lets SQLite restore what it needs to read,
+  while a `query_only` guard keeps it unable to modify a single row. A read
+  that does fail now says "Couldn't read your history" and points at the file,
+  instead of silently drawing an empty state.
 
 ## [0.2.4] — 2026-08-10
 

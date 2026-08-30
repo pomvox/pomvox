@@ -19,7 +19,7 @@ struct HistoryView: View {
             ScrollView {
                 LazyVStack(spacing: 0) {
                     if results.isEmpty {
-                        EmptyResults(searching: !query.isEmpty)
+                        EmptyResults(searching: !query.isEmpty, failed: model.loadFailed)
                     } else {
                         ForEach(Array(results.enumerated()), id: \.element.id) { idx, d in
                             DictationRow(dictation: d, dateStyle: .calendar, showDelete: true,
@@ -114,13 +114,30 @@ struct SearchField: View {
 
 private struct EmptyResults: View {
     let searching: Bool
+    /// See `EmptyState` — a read failure must never render as an empty history.
+    var failed: Bool = false
+
     var body: some View {
         VStack(spacing: 8) {
-            Image(systemName: searching ? "text.magnifyingglass" : "clock")
+            Image(systemName: symbol)
                 .font(.system(size: 30, weight: .light)).foregroundStyle(Palette.muted)
-            Text(searching ? "No matches" : "No dictations yet")
-                .font(Typo.display(18)).foregroundStyle(Palette.ink)
+            Text(title).font(Typo.display(18)).foregroundStyle(Palette.ink)
+            if failed {
+                Text("Nothing was deleted — ~/.pomvox/history.db couldn't be read. "
+                     + "Reopening Pomvox usually clears it.")
+                    .font(Typo.ui(12.5)).foregroundStyle(Palette.muted)
+                    .multilineTextAlignment(.center).frame(maxWidth: 340)
+            }
         }
         .frame(maxWidth: .infinity).padding(.top, 80)
+    }
+
+    private var symbol: String {
+        if failed { return "exclamationmark.triangle" }
+        return searching ? "text.magnifyingglass" : "clock"
+    }
+    private var title: String {
+        if failed { return "Couldn't read your history" }
+        return searching ? "No matches" : "No dictations yet"
     }
 }

@@ -253,6 +253,67 @@ final class TelemetryTests: XCTestCase {
         XCTAssertTrue(q.isEmpty)
     }
 
+    // MARK: - queue persistence (survives quit)
+
+    private func store() -> TelemetryQueueStore {
+        TelemetryQueueStore(defaults: freshDefaults())
+    }
+
+    func testQueueStoreRoundTripsEvents() {
+        let st = store()
+        var props = TelemetryProps()
+        props.durationMs = 1234
+        props.cleanupStatus = "ok"
+        props.coremlCacheHit = true
+        let events = [ev(1), TelemetryEvent(event: .dictationCompleted, ts: 2, props: props)]
+
+        st.save(events, appVersion: "0.2.4")
+        let restored = st.load(appVersion: "0.2.4")
+
+        XCTAssertEqual(restored, events, "the pending queue must survive a quit intact")
+    }
+
+    func testQueueStoreDropsEventsFromADifferentAppVersion() {
+        // Events carry no version; the envelope stamps whatever is current at
+        // flush time. Restoring across an update would report 0.2.4's events as
+        // 0.2.5 and invent an install on a version that never ran.
+        let st = store()
+        st.save([ev(1), ev(2)], appVersion: "0.2.4")
+        XCTAssertEqual(st.load(appVersion: "0.2.5"), [], "must not mis-attribute across an update")
+        XCTAssertEqual(st.load(appVersion: "0.2.4"), [], "and the stale entry is cleared")
+    }
+
+    func testQueueStoreReturnsEmptyWhenNothingSaved() {
+        XCTAssertEqual(store().load(appVersion: "0.2.4"), [])
+    }
+
+    func testQueueStoreDiscardsUnreadableData() {
+        let defaults = freshDefaults()
+        defaults.set(Data("not json".utf8), forKey: TelemetryQueueStore.queueKey)
+        defaults.set("0.2.4", forKey: TelemetryQueueStore.versionKey)
+        XCTAssertEqual(TelemetryQueueStore(defaults: defaults).load(appVersion: "0.2.4"), [],
+                       "corrupt input is discarded, never trusted")
+    }
+
+    func testSavingAnEmptyQueueClearsTheStore() {
+        let st = store()
+        st.save([ev(1)], appVersion: "0.2.4")
+        st.save([], appVersion: "0.2.4")
+        XCTAssertNil(st.defaults.data(forKey: TelemetryQueueStore.queueKey))
+    }
+
+    func testRestoringQueueStillRespectsTheCap() {
+        let q = TelemetryQueue(restoring: (1...5).map(ev), cap: 3, maxBatch: 50)
+        XCTAssertEqual(q.events.map(\.ts), [3, 4, 5], "a restored queue is bounded too")
+    }
+
+    func testRemoveAllEmptiesTheQueue() {
+        var q = TelemetryQueue(cap: 200, maxBatch: 50)
+        for i in 1...3 { q.enqueue(ev(i)) }
+        q.removeAll()
+        XCTAssertTrue(q.isEmpty)
+    }
+
     // MARK: - gate
 
     func testGate() {
@@ -368,5 +429,101 @@ final class TelemetryTests: XCTestCase {
         XCTAssertTrue(e.osVersion.hasPrefix("macOS "), "got \(e.osVersion)")
         XCTAssertFalse(e.appVersion.isEmpty)
         XCTAssertFalse(e.arch.isEmpty)
+    }
+
+    // MARK: - client persistence (what a quit would otherwise lose)
+
+    /// Thread-safe recorder for the injected `persist` closure.
+    private final class PersistSpy: @unchecked Sendable {
+        private let lock = NSLock()
+        private var _snapshots: [[TelemetryEvent]] = []
+        var snapshots: [[TelemetryEvent]] { lock.lock(); defer { lock.unlock() }; return _snapshots }
+        var latest: [TelemetryEvent] { snapshots.last ?? [] }
+        var save: @Sendable ([TelemetryEvent]) -> Void {
+            { [self] events in lock.lock(); _snapshots.append(events); lock.unlock() }
+        }
+    }
+
+    private func makeClient(enabled: Bool, endpoint: URL?, spy: SenderSpy,
+                            persist: PersistSpy, queue: TelemetryQueue = TelemetryQueue())
+        -> TelemetryClient {
+        TelemetryClient(endpoint: endpoint, enabled: { enabled }, env: env,
+                        now: { 1_730_000_000_000 }, sender: spy.send,
+                        queue: queue, persist: persist.save)
+    }
+
+    func testRecordPersistsThePendingQueue() async {
+        let spy = SenderSpy(), persist = PersistSpy()
+        let client = makeClient(enabled: true, endpoint: URL(string: "https://x")!,
+                                spy: spy, persist: persist)
+        await client.record(ev(1))
+        await client.record(ev(2))
+        XCTAssertEqual(persist.latest.map(\.ts), [1, 2],
+                       "an unflushed event must be on disk before the app can quit")
+    }
+
+    func testSuccessfulFlushClearsThePersistedQueue() async {
+        let spy = SenderSpy(); spy.result = .success
+        let persist = PersistSpy()
+        let client = makeClient(enabled: true, endpoint: URL(string: "https://x")!,
+                                spy: spy, persist: persist)
+        await client.record(ev(1))
+        await client.flush()
+        XCTAssertTrue(persist.latest.isEmpty, "sent events must not be replayed next launch")
+    }
+
+    func testRetryableFailureKeepsThePersistedQueue() async {
+        let spy = SenderSpy(); spy.result = .retryableFailure
+        let persist = PersistSpy()
+        let client = makeClient(enabled: true, endpoint: URL(string: "https://x")!,
+                                spy: spy, persist: persist)
+        await client.record(ev(1))
+        await client.flush()
+        XCTAssertEqual(persist.latest.map(\.ts), [1],
+                       "offline events survive the quit and retry next launch")
+    }
+
+    func testPermanentFailureClearsThePersistedQueue() async {
+        let spy = SenderSpy(); spy.result = .permanentFailure
+        let persist = PersistSpy()
+        let client = makeClient(enabled: true, endpoint: URL(string: "https://x")!,
+                                spy: spy, persist: persist)
+        await client.record(ev(1))
+        await client.flush()
+        XCTAssertTrue(persist.latest.isEmpty, "a 400 must not be retried forever from disk")
+    }
+
+    func testRestoredQueueIsSentOnTheNextFlush() async {
+        let spy = SenderSpy(), persist = PersistSpy()
+        let client = makeClient(enabled: true, endpoint: URL(string: "https://x")!,
+                                spy: spy, persist: persist,
+                                queue: TelemetryQueue(restoring: [ev(1), ev(2)]))
+        await client.flush()
+        XCTAssertEqual(spy.bodies.count, 1, "what the last run buffered is sent, not lost")
+        let events = decode(spy.bodies[0])["events"] as! [[String: Any]]
+        XCTAssertEqual(events.count, 2)
+    }
+
+    func testForgetDropsEverythingPendingIncludingOnDisk() async {
+        let spy = SenderSpy(), persist = PersistSpy()
+        let client = makeClient(enabled: true, endpoint: URL(string: "https://x")!,
+                                spy: spy, persist: persist)
+        await client.record(ev(1))
+        await client.forget()
+        XCTAssertTrue(persist.latest.isEmpty, "withdrawing consent clears the disk queue")
+        await client.flush()
+        XCTAssertTrue(spy.bodies.isEmpty, "and nothing queued beforehand is ever sent")
+    }
+
+    func testDisabledClientNeverPersistsAnything() async {
+        // The consent gate is in `ingest`, so a denied session cannot even reach
+        // `record` -- nothing is buffered, so nothing can be written to disk.
+        let spy = SenderSpy(), persist = PersistSpy()
+        let client = makeClient(enabled: false, endpoint: URL(string: "https://x")!,
+                                spy: spy, persist: persist)
+        client.emit(.appLaunch)
+        try? await Task.sleep(nanoseconds: 100_000_000)
+        XCTAssertTrue(persist.snapshots.isEmpty, "no consent → nothing on disk")
+        XCTAssertTrue(spy.bodies.isEmpty)
     }
 }

@@ -2,8 +2,19 @@ import Foundation
 import SQLite3
 
 /// Read-only view over the Python app's `~/.pomvox/history.db`. A separate
-/// process from the dictation engine: it opens the database read-only so it can
-/// never block or corrupt the writer, and adds zero latency to the hot path.
+/// process from the dictation engine: it never modifies a row and adds zero
+/// latency to the hot path.
+///
+/// It opens the file `READWRITE` and immediately sets `PRAGMA query_only`. That
+/// looks contradictory and isn't: the engine keeps the database in WAL mode, and
+/// a WAL database can only be read through its `-wal`/`-shm` sidecars. A
+/// connection opened `SQLITE_OPEN_READONLY` cannot create or recover them, so
+/// when the sidecars are absent — a clean quit checkpoints and deletes the
+/// `-wal` — every query fails with `unable to open database file` and the Hub
+/// renders an *empty* history, which reads as a wiped database. (Seen
+/// 2026-08-27: the Hub read 135 ms before the engine reopened the file and
+/// recreated the `-wal`.) `query_only` keeps the "never writes a row" guarantee
+/// while letting SQLite materialise what it needs to read at all.
 ///
 /// Pure of SwiftUI; unit-tested against fixture databases (point `POMVOX_DB_PATH`
 /// at one). Stat definitions are the spec the Python History window must agree
@@ -25,31 +36,62 @@ struct HistoryReader {
 
     var databaseExists: Bool { FileManager.default.fileExists(atPath: path) }
 
-    /// Load every row, newest first. Empty (not an error) when the database is
-    /// missing or has no rows — the Hub renders a first-run empty state.
-    func load() -> [Dictation] {
-        guard databaseExists else { return [] }
+    /// The result of a load. `unreadable` exists so the Hub can say "couldn't
+    /// read your history" instead of drawing the same empty state it uses for a
+    /// brand-new install — an empty list is how a user reads *deletion*, and
+    /// that is the most alarming reading available.
+    enum Outcome: Equatable {
+        case rows([Dictation])
+        case noDatabase          // fresh install: nothing has been written yet
+        case unreadable          // the file is there and we could not read it
 
-        var db: OpaquePointer?
-        // READ-ONLY: the engine owns writes; the Hub only ever reads.
-        guard sqlite3_open_v2(path, &db, SQLITE_OPEN_READONLY, nil) == SQLITE_OK, let db else {
-            sqlite3_close(db)
+        var rows: [Dictation] {
+            if case .rows(let r) = self { return r }
             return []
         }
-        defer { sqlite3_close(db) }
-        // Don't fight the writer for the WAL: read whatever is committed.
+        var failed: Bool { self == .unreadable }
+    }
+
+    /// Open for reading. `READWRITE` so SQLite may materialise the WAL sidecars
+    /// (see the type comment), immediately constrained by `query_only` so this
+    /// connection can never change a row. Falls back to `READONLY` when the file
+    /// or its directory genuinely isn't writable — better a possible WAL failure
+    /// than no read at all.
+    private func openForReading() -> OpaquePointer? {
+        var db: OpaquePointer?
+        if sqlite3_open_v2(path, &db, SQLITE_OPEN_READWRITE, nil) == SQLITE_OK, let db {
+            sqlite3_exec(db, "PRAGMA query_only = 1", nil, nil, nil)
+            sqlite3_busy_timeout(db, 200)
+            return db
+        }
+        sqlite3_close(db)
+        db = nil
+        guard sqlite3_open_v2(path, &db, SQLITE_OPEN_READONLY, nil) == SQLITE_OK, let db else {
+            sqlite3_close(db)
+            return nil
+        }
         sqlite3_busy_timeout(db, 200)
+        return db
+    }
+
+    /// Load every row, newest first, reporting whether the read actually worked.
+    func loadOutcome() -> Outcome {
+        guard databaseExists else { return .noDatabase }
+
+        guard let db = openForReading() else { return .unreadable }
+        defer { sqlite3_close(db) }
 
         let sql = """
             SELECT id, ts, raw_text, final_text, cleanup_status, app_hint, duration_s
             FROM history ORDER BY ts DESC
             """
         var stmt: OpaquePointer?
-        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [] }
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return .unreadable }
         defer { sqlite3_finalize(stmt) }
 
         var rows: [Dictation] = []
-        while sqlite3_step(stmt) == SQLITE_ROW {
+        var step = sqlite3_step(stmt)
+        while step == SQLITE_ROW {
             rows.append(
                 Dictation(
                     id: sqlite3_column_int64(stmt, 0),
@@ -61,22 +103,23 @@ struct HistoryReader {
                     durationSeconds: sqlite3_column_type(stmt, 6) == SQLITE_NULL
                         ? nil : sqlite3_column_double(stmt, 6)
                 ))
+            step = sqlite3_step(stmt)
         }
-        return rows
+        // A read that dies partway (I/O error, a vanished WAL) must not pass
+        // itself off as a short history.
+        guard step == SQLITE_DONE else { return .unreadable }
+        return .rows(rows)
     }
+
+    /// Rows only, for callers that have nothing to say about failure.
+    func load() -> [Dictation] { loadOutcome().rows }
 
     /// The engine's purge-proof all-time counters, when this db has them.
     /// nil on a pre-lifetime file (no `lifetime_stats` table) — callers fall
     /// back to the windowed row sums rather than showing zero.
     func lifetimeTotals() -> (words: Int, dictations: Int)? {
-        guard databaseExists else { return nil }
-        var db: OpaquePointer?
-        guard sqlite3_open_v2(path, &db, SQLITE_OPEN_READONLY, nil) == SQLITE_OK, let db else {
-            sqlite3_close(db)
-            return nil
-        }
+        guard databaseExists, let db = openForReading() else { return nil }
         defer { sqlite3_close(db) }
-        sqlite3_busy_timeout(db, 200)
 
         let sql = "SELECT key, value FROM lifetime_stats WHERE key IN ('total_words', 'total_dictations')"
         var stmt: OpaquePointer?
