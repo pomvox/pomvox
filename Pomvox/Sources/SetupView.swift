@@ -27,7 +27,8 @@ struct SetupView: View {
     private let tick = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
     private var rows: [OnboardingFlow.Row] {
-        flow.rows(statuses: statuses, tapInstalled: engine.tapInstalled)
+        flow.rows(statuses: statuses, tapInstalled: engine.tapInstalled,
+                  location: Permissions.appLocation())
     }
     private var complete: Bool {
         flow.complete(statuses: statuses, tapInstalled: engine.tapInstalled)

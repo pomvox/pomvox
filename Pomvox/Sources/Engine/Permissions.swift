@@ -70,6 +70,26 @@ enum Permissions {
         openSettings(key)
     }
 
+    /// Where the running bundle lives. TCC keys grants to the app's location,
+    /// so a copy launched from a DMG (App Translocation puts it under a
+    /// randomised `/AppTranslocation/` path) or left in ~/Downloads can't hold
+    /// an Input Monitoring grant even after the user adds it by hand.
+    static func appLocation() -> OnboardingFlow.AppLocation {
+        let path = Bundle.main.bundlePath
+        if path.contains("/AppTranslocation/") { return .translocated }
+        let home = NSHomeDirectory()
+        if path.hasPrefix("/Applications/") || path.hasPrefix("\(home)/Applications/") {
+            return .applicationsFolder
+        }
+        return .elsewhere
+    }
+
+    /// Reveal the app in Finder — the fastest path to dragging it into
+    /// /Applications, or onto the Input Monitoring list's `+` sheet.
+    static func revealAppInFinder() {
+        NSWorkspace.shared.activateFileViewerSelecting([Bundle.main.bundleURL])
+    }
+
     static func openSettings(_ key: String) {
         guard let link = settingsLinks[key], let url = URL(string: link) else { return }
         NSWorkspace.shared.open(url)
