@@ -32,8 +32,14 @@ final class TelemetryModel: ObservableObject {
         store.consent = decision
         consent = decision
         // Record the change only when granting (a denied→event would itself be a
-        // send the user just declined; the gate blocks it anyway).
-        if decision == .granted { TelemetryClient.shared.emit(.settingChanged) }
+        // send the user just declined; the gate blocks it anyway). Withdrawing
+        // consent also drops whatever is still queued, on disk included — events
+        // buffered while granted must not outlive the choice that allowed them.
+        if decision == .granted {
+            TelemetryClient.shared.emit(.settingChanged)
+        } else {
+            Task { await TelemetryClient.shared.forget() }
+        }
     }
 }
 
