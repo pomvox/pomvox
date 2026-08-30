@@ -70,6 +70,13 @@ jobs:
         working-directory: Pomvox
         run: xcodegen generate
 
+      # FluidAudio and swift-tokenizers are both held below a specific version
+      # for reasons nothing in the app's sources expresses; assert the pins
+      # survived rather than discovering a loosened one as an unrelated-looking
+      # build failure. See scripts/check-package-pins.sh.
+      - name: Check package pins survived generation
+        run: ./scripts/check-package-pins.sh
+
       # Cache the resolved Swift packages (mlx-swift, swift-syntax, FluidAudio, …)
       # keyed on the committed Package.resolved — the first build is the slow one.
       - name: Cache SwiftPM
@@ -93,7 +100,24 @@ jobs:
             -clonedSourcePackagesDirPath .spm \
             -resultBundlePath TestResults.xcresult \
             CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
-            | xcbeautify --renderer github-actions || exit 1
+            | tee raw-build.log | xcbeautify --renderer github-actions || exit 1
+
+      # xcbeautify collapses the build system's "Multiple commands produce X"
+      # detail, and those are the only lines naming BOTH conflicting producers
+      # — without them a build-graph failure is diagnosable only by guesswork.
+      - name: Show raw build-graph errors
+        if: failure()
+        run: |
+          grep -n -A25 "Multiple commands produce" raw-build.log || \
+            echo "no 'Multiple commands produce' in raw log"
+
+      - name: Upload raw build log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: raw-build-log
+          path: raw-build.log
+          if-no-files-found: ignore
 
       - name: Upload test results on failure
         if: failure()
