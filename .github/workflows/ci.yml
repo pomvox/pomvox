@@ -67,13 +67,25 @@ jobs:
       - name: Check package pins survived generation
         run: ./scripts/check-package-pins.sh
 
-      # Cache the resolved Swift packages (mlx-swift, swift-syntax, FluidAudio, …)
-      # keyed on the committed Package.resolved — the first build is the slow one.
+      # Cache the cloned Swift packages (mlx-swift, swift-syntax, FluidAudio, …).
+      #
+      # Keyed on project.yml, which is the actual source of truth for package
+      # URLs and version ranges — change a pin and the key changes.
+      #
+      # It used to be keyed on Package.resolved *inside* the .xcodeproj. That
+      # file never exists at this point: the .xcodeproj is gitignored and
+      # generated one step earlier, and Package.resolved isn't written until
+      # resolution runs during the build below. hashFiles() on a missing path
+      # returns an empty string, so every run computed the same degenerate key
+      # `spm-macOS-` and no cache was ever stored (`gh cache list` showed zero
+      # spm-* entries). This only ever cost the ~80 s of `Fetching`/`Checking
+      # out` — package *compilation* is not cached by this and remains the bulk
+      # of the job.
       - name: Cache SwiftPM
         uses: actions/cache@v4
         with:
           path: .spm
-          key: spm-${{ runner.os }}-${{ hashFiles('Pomvox/Pomvox.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}
+          key: spm-${{ runner.os }}-${{ hashFiles('Pomvox/project.yml') }}
           restore-keys: spm-${{ runner.os }}-
 
       # Unit tests are pure logic, but the test host links the full app (FluidAudio
