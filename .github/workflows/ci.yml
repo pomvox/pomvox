@@ -77,7 +77,13 @@ jobs:
           restore-keys: spm-${{ runner.os }}-
 
       # Unit tests are pure logic, but the test host links the full app (FluidAudio
-      # + mlx-swift), so the build is heavy. The CI runner has no code-signing
+      # + mlx-swift), so the build is heavy.
+      #
+      # Test timeouts are on deliberately. Three AudioCaptureFailureTests once
+      # took 990 s, 1560 s and 1590 s here — CoreAudio blocking on an input node
+      # it had no permission to open — and *passed*, so ~69 min of the job hid
+      # behind green checkmarks. A 120 s per-test allowance turns any repeat of
+      # that into a visible failure instead of a slow, silent one. The CI runner has no code-signing
       # identity ("Murmur Dev" is a local self-signed cert), so signing is disabled
       # — the unit tests don't exercise entitlement-gated paths (mic/TCC/hotkey).
       - name: Build & test
@@ -89,6 +95,8 @@ jobs:
             -destination 'platform=macOS' \
             -clonedSourcePackagesDirPath .spm \
             -resultBundlePath TestResults.xcresult \
+            -test-timeouts-enabled YES \
+            -default-test-execution-time-allowance 120 \
             CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
             | tee raw-build.log | xcbeautify --renderer github-actions || exit 1
 

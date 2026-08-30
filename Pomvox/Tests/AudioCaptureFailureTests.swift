@@ -1,3 +1,4 @@
+import AVFoundation
 import XCTest
 @testable import Pomvox
 
@@ -50,19 +51,41 @@ final class AudioCaptureFailureTests: XCTestCase {
 
     // MARK: - stale-engine rebuild (post-sleep dead stream)
 
+    /// The rebuild tests drive a real `AVAudioEngine`, so they need a device we
+    /// are actually allowed to open — not merely a device that exists.
+    ///
+    /// `hasInputDevice()` only asks whether CoreAudio lists an input. A CI
+    /// runner is an Apple Virtual Machine that lists a virtual one, so the old
+    /// device-only guard never skipped; `start()` then touched
+    /// `engine.inputNode` with no microphone grant and CoreAudio sat there for
+    /// tens of minutes before failing. `try?` swallowed the error and the
+    /// assertions still held, so the tests *passed* — at 990 s, 1560 s and
+    /// 1590 s. Those three were the entire ~69-minute CI test phase, hidden
+    /// behind green checkmarks.
+    ///
+    /// `authorizationStatus` is non-prompting, so this is safe to call from a
+    /// test bundle.
+    private func requireOpenableInput() throws {
+        try XCTSkipUnless(AudioCapture.hasInputDevice(),
+                          "no audio input device on this machine")
+        try XCTSkipUnless(
+            AVCaptureDevice.authorizationStatus(for: .audio) == .authorized,
+            "microphone access not granted — opening inputNode would block for minutes")
+    }
+
     func testMarkStaleForcesRebuildOnNextStart() throws {
-        try XCTSkipUnless(AudioCapture.hasInputDevice(), "no audio input device on this machine")
+        try requireOpenableInput()
         let capture = AudioCapture()
         capture.markStale()
-        // start() may throw on CI (no mic grant) — the rebuild happens first
-        // and must be counted either way.
+        // start() may still throw (device busy, format mismatch) — the rebuild
+        // happens before that and must be counted either way.
         _ = try? capture.start()
         XCTAssertEqual(capture.rebuildCount, 1)
         capture.stop()
     }
 
     func testStartWithoutStaleDoesNotRebuild() throws {
-        try XCTSkipUnless(AudioCapture.hasInputDevice(), "no audio input device on this machine")
+        try requireOpenableInput()
         let capture = AudioCapture()
         _ = try? capture.start()
         XCTAssertEqual(capture.rebuildCount, 0)
@@ -70,7 +93,7 @@ final class AudioCaptureFailureTests: XCTestCase {
     }
 
     func testMarkStaleIsIdempotentPerStart() throws {
-        try XCTSkipUnless(AudioCapture.hasInputDevice(), "no audio input device on this machine")
+        try requireOpenableInput()
         let capture = AudioCapture()
         capture.markStale()
         capture.markStale()
