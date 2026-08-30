@@ -14,6 +14,30 @@ struct OnboardingFlow {
     ]
 
     static let relaunchNote = "granted — relaunch Pomvox to pick it up"
+    /// Input Monitoring is the one grant macOS will not offer to add for you.
+    /// `IOHIDRequestAccess` prompts only while the status is *unknown*; once a
+    /// prompt has been dismissed or the row deleted, clicking Grant deep-links
+    /// to a pane where Pomvox simply isn't listed, with no way forward that the
+    /// pane itself suggests. The `+` button is the way out, and nothing on
+    /// screen said so (reported 2026-08-30).
+    static let manualAddNote =
+        "Not listed in System Settings? Click + under that list, pick Pomvox in "
+        + "/Applications, switch it on, then relaunch Pomvox."
+    /// A translocated or stray copy is worse than unlisted: TCC keys grants to
+    /// the app's location, so anything granted to a randomised read-only path
+    /// evaporates. Say so before the user fights the pane.
+    static let moveToApplicationsNote =
+        "Pomvox isn't running from /Applications. Quit it, move Pomvox.app to "
+        + "/Applications, and open it from there — macOS ties permissions to "
+        + "where the app lives."
+
+    /// Where the running bundle lives — the part of the Input Monitoring
+    /// diagnosis that isn't pure, injected so `rows` stays testable.
+    enum AppLocation: Equatable {
+        case applicationsFolder   // /Applications or ~/Applications
+        case translocated         // launched from a DMG/quarantined copy
+        case elsewhere            // Downloads, Desktop, a build folder…
+    }
     static let staleTccHint =
         "Granted but still red? Remove the app from the list in System Settings "
         + "and add it back."
@@ -27,14 +51,24 @@ struct OnboardingFlow {
         var note: String = ""
     }
 
-    func rows(statuses: [String: Bool?], tapInstalled: Bool) -> [Row] {
+    func rows(statuses: [String: Bool?], tapInstalled: Bool,
+              location: AppLocation = .applicationsFolder) -> [Row] {
         Self.permissions.map { key, title, why in
             let granted = statuses[key] ?? nil
             var note = ""
-            if key == "input_monitoring", granted == true, !tapInstalled {
-                // The grant landed but CGEventTapCreate still fails: macOS
-                // does not extend Input Monitoring to a running process.
-                note = Self.relaunchNote
+            if key == "input_monitoring" {
+                if granted == true, !tapInstalled {
+                    // The grant landed but CGEventTapCreate still fails: macOS
+                    // does not extend Input Monitoring to a running process.
+                    note = Self.relaunchNote
+                } else if granted != true {
+                    // Wrong location first: adding a translocated copy to the
+                    // list doesn't stick, so telling someone to click + there
+                    // would send them in a circle.
+                    note = location == .applicationsFolder
+                        ? Self.manualAddNote
+                        : Self.moveToApplicationsNote
+                }
             }
             return Row(key: key, title: title, why: why, granted: granted, note: note)
         }
