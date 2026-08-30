@@ -10,9 +10,23 @@ options:
   groupSortPosition: top
 
 packages:
+  # Held below 0.15.6 deliberately. That release added
+  # NemoTextProcessing.xcframework, a static-library binary target whose
+  # Headers/ contain a module.modulemap. swift-tokenizers already ships one
+  # (TokenizersRust.xcframework), and Xcode copies every static xcframework's
+  # headers into the single shared $(BUILT_PRODUCTS_DIR)/include/ — so the two
+  # collide and the build dies before compiling anything:
+  #   error: Multiple commands produce '.../Debug/include/module.modulemap'
+  #     note: ProcessXCFramework .../NemoTextProcessing.xcframework
+  #     note: ProcessXCFramework .../TokenizersRust.xcframework
+  # `from:` is a floating minimum, so CI (which resolves fresh every run) began
+  # picking 0.15.6 and went red on 2026-08-10 while local checkouts stayed on
+  # 0.15.5 via Package.resolved and kept passing. Revisit when FluidAudio or
+  # swift-tokenizers stops putting module.modulemap at its Headers root.
   FluidAudio:
     url: https://github.com/FluidInference/FluidAudio.git
-    from: "0.15.0"
+    minVersion: "0.15.0"
+    maxVersion: "0.15.6"
   # Cleanup LLM (M6): Qwen3 on the GPU via mlx-swift-lm. Same pins as the M0
   # spike harness (native/Package.swift); mlx-swift's default.metallib is an
   # Xcode build phase, which is why cleanup lives in this target, not a CLI.
