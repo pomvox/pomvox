@@ -23,6 +23,19 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
   both engines. The "blocked" log line and status message now name the pid and
   the executable holding the lock.
 
+- **The History page could show "No dictations yet" when nothing had been
+  deleted.** Pomvox's engine keeps `~/.pomvox/history.db` in SQLite WAL mode,
+  which needs its `-wal` sidecar file to be readable. The Hub opened the
+  database strictly read-only, and a read-only connection cannot recreate that
+  sidecar — so if the Hub read before the engine had reopened the database
+  (a clean quit removes the sidecar), every query failed and History and the
+  Home dashboard rendered as though the database were empty. Nothing was ever
+  deleted, but an empty list is a frightening thing to be shown. The Hub now
+  opens the database in a mode that lets SQLite restore what it needs to read,
+  while a `query_only` guard keeps it unable to modify a single row. A read
+  that does fail now says "Couldn't read your history" and points at the file,
+  instead of silently drawing an empty state.
+
 ## [0.2.4] — 2026-08-10
 
 ### Changed
