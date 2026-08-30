@@ -5,6 +5,13 @@ import Foundation
 /// logic is pinned by OnboardingLogicTests (vector parity with
 /// tests/test_onboarding.py). No account, no profile quiz — three permission
 /// rows with a plain-language *why*.
+///
+/// **One deliberate divergence from the Python vectors.** An ungranted Input
+/// Monitoring row used to carry no note at all
+/// (`test_no_relaunch_note_while_simply_ungranted`); it now carries recovery
+/// guidance, because "click Grant" can silently do nothing and strand the user
+/// in a Settings pane that doesn't list the app. The Python engine is frozen
+/// and doesn't own this UI, so the copy is not mirrored there.
 struct OnboardingFlow {
     /// (key, title, why) — Python's PERMISSIONS tuple, same order.
     static let permissions: [(key: String, title: String, why: String)] = [

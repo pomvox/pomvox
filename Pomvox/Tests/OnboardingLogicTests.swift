@@ -32,11 +32,19 @@ final class OnboardingLogicTests: XCTestCase {
         XCTAssertTrue(im.note.lowercased().contains("relaunch"))
     }
 
+    /// The *relaunch* note belongs only to granted-but-no-tap. While simply
+    /// ungranted the row now carries the "not listed / move to Applications"
+    /// guidance instead — telling someone to relaunch would be nonsense when
+    /// they haven't granted anything yet. Asserted against the relaunch note
+    /// specifically, not against emptiness, since emptiness is no longer the
+    /// point. (This is the one place the Swift flow deliberately diverges from
+    /// tests/test_onboarding.py's `test_no_relaunch_note_while_simply_ungranted`
+    /// — see the note in OnboardingLogic.swift.)
     func testNoRelaunchNoteWhileSimplyUngranted() {
         var statuses = allGranted
         statuses["input_monitoring"] = false
         let rows = flow.rows(statuses: statuses, tapInstalled: false)
-        XCTAssertEqual(rows[1].note, "")
+        XCTAssertNotEqual(rows[1].note, OnboardingFlow.relaunchNote)
     }
 
     func testCompleteRequiresAllGrantsAndALiveTap() {
