@@ -116,6 +116,10 @@ open ~/Applications/Pomvox.app
 - **Hands-free:** `Fn+Space` to start; it auto-stops on a natural pause (or press
   `Fn+Space` / tap `Fn` to stop).
 - **Cancel:** `Esc` while recording discards the utterance — nothing is inserted.
+- **Dictation mark (optional):** turn it on in **Settings → General** and every
+  dictation ends with one emoji of your choosing (`🎙️` by default) — handy if
+  you want a post to show it was spoken. Off by default; nothing is ever added
+  to your words unless you ask for it.
 
 A floating HUD shows a live two-tone draft (settled words bright, the newest
 chunk dimmed) while you speak, then "finishing…" during cleanup. The menu-bar
@@ -131,8 +135,8 @@ The Hub window (menu bar → **Open Hub…**, or the Dock icon while it's open):
   delete-all. Local-only sqlite at `~/.pomvox/history.db`: **transcripts only —
   audio is never stored** — rows auto-delete after `[history] retention_days`
   (default 7; `0` keeps nothing, `enabled = false` writes nothing).
-- **Settings** — models, hotkeys, cleanup, HUD, launch-at-login. Cleanup/HUD
-  edits apply live; model changes re-arm.
+- **Settings** — models, hotkeys, cleanup, HUD, the optional dictation mark,
+  launch-at-login. Cleanup/HUD/mark edits apply live; model changes re-arm.
 - **Dictionary** — words the cleanup model should spell your way, plus
   many-to-one misheard-term fixup rules ("pom box" → "Pomvox") that always
   apply, even with cleanup off. A live test box shows exactly what your rules

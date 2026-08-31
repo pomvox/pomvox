@@ -14,6 +14,9 @@ struct SettingsValues: Equatable {
     var hudShowDraft: Bool
     var hudPosition: String
     var hudSounds: Bool
+    // Dictation mark
+    var signatureEnabled: Bool
+    var signatureMark: String
     // Models
     var sttModel: String
     var cleanupModel: String
@@ -35,6 +38,7 @@ struct SettingsValues: Equatable {
     static let defaults = SettingsValues(
         cleanupEnabled: true, cleanupStyle: "polish", cleanupTimeoutS: 5.0,
         hudEnabled: true, hudShowDraft: true, hudPosition: "bottom-center", hudSounds: true,
+        signatureEnabled: false, signatureMark: Signature.defaultMark,
         sttModel: "mlx-community/parakeet-tdt-0.6b-v2",
         cleanupModel: MemoryTier.standardCleanupModel,
         ptt: "fn", toggle: "fn+space", stop: "", cancel: "esc", quickAdd: "",
@@ -56,6 +60,8 @@ enum SettingsIO {
             hudShowDraft: doc.bool("hud", "show_draft") ?? d.hudShowDraft,
             hudPosition: doc.string("hud", "position") ?? d.hudPosition,
             hudSounds: doc.bool("hud", "sounds") ?? d.hudSounds,
+            signatureEnabled: doc.bool("signature", "enabled") ?? d.signatureEnabled,
+            signatureMark: doc.string("signature", "mark") ?? d.signatureMark,
             sttModel: doc.string("stt", "model") ?? d.sttModel,
             cleanupModel: doc.string("cleanup", "model") ?? d.cleanupModel,
             ptt: doc.string("hotkey", "ptt") ?? d.ptt,
@@ -123,6 +129,8 @@ enum SettingsIO {
         setBool("hud", "show_draft", v.hudShowDraft, c?.hudShowDraft)
         setString("hud", "position", v.hudPosition, c?.hudPosition)
         setBool("hud", "sounds", v.hudSounds, c?.hudSounds)
+        setBool("signature", "enabled", v.signatureEnabled, c?.signatureEnabled)
+        setString("signature", "mark", v.signatureMark, c?.signatureMark)
         setString("stt", "model", v.sttModel, c?.sttModel)
         setString("cleanup", "model", v.cleanupModel, c?.cleanupModel)
         setString("hotkey", "ptt", v.ptt, c?.ptt)
@@ -197,6 +205,9 @@ final class SettingsModel: ObservableObject {
         if SettingsIO.writeIfValid(values, path: path) {
             saved = values
             justSaved = true
+            // The engine snapshots most keys at arm(), but hot-applies the
+            // dictation mark off this.
+            NotificationCenter.default.post(name: .pomvoxSettingsDidChange, object: self)
             // Anonymous: that *a* setting changed, never which one or its value.
             TelemetryClient.shared.emit(.settingChanged)
         }

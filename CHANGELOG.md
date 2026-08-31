@@ -7,6 +7,24 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 
 ## [Unreleased]
 
+## [0.2.5] — 2026-08-30
+
+### Added
+
+- **An optional mark on every dictation.** Turn on *Settings → General →
+  Dictation mark* and each dictation ends with one emoji of your choosing
+  (`🎙️`, `🗣️`, `✨`, `💬`, `🎧` or `🪶`; any emoji works if you set
+  `[signature] mark` by hand) — so a post can show it was spoken rather than
+  typed, without typing that yourself. Off by default and never turned on by an
+  upgrade: adding characters to your words is the one thing this app shouldn't
+  do behind your back, so it happens only where you asked for it.
+
+  The mark is applied last — after cleanup and after your dictionary
+  replacements — so it can't become input the cleanup model or a replacement
+  rule acts on. Blank dictations are never marked, and re-inserting a past
+  dictation from History pastes the mark once, not twice. Flipping the toggle
+  takes effect on your next dictation; no re-arm.
+
 ### Fixed
 
 - **Dictation could stop working entirely after a reboot, with no way to
@@ -22,6 +40,23 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
   program, so a recycled pid is recognised as stale and reclaimed. Fixed in
   both engines. The "blocked" log line and status message now name the pid and
   the executable holding the lock.
+
+- **Opting in, dictating once and quitting straight away reported nothing.**
+  Anonymous usage events lived only in memory, so quitting inside the ~2 s
+  flush window — or while offline, with a batch requeued after a failed send —
+  dropped them silently. The pending queue now survives a quit. Nothing new is
+  recorded: it is the same content-free set of counters, still gated on
+  consent, and withdrawing consent now erases the queue on disk as well as in
+  memory.
+
+- **Setup could send you to a System Settings pane that doesn't list Pomvox.**
+  macOS only offers the Input Monitoring prompt while the permission is still
+  undecided, so once a prompt had been dismissed, clicking *Grant* opened a
+  list Pomvox wasn't in, with nothing on screen to say what to do next. That
+  row now explains the fix — add Pomvox with the `+` button and relaunch — or,
+  if the app is running from a disk image or outside /Applications, says to
+  move it there first, since macOS ties permissions to where an app lives and
+  a copy launched from a DMG can't hold that grant at all.
 
 - **The History page could show "No dictations yet" when nothing had been
   deleted.** Pomvox's engine keeps `~/.pomvox/history.db` in SQLite WAL mode,
@@ -506,7 +541,9 @@ on Apple Silicon, shipping as a signed, notarized `Pomvox.dmg`.
 - **Python reference engine** (`src/pomvox/`) — the original app, now frozen as a
   runnable reference whose pure-logic modules are the cross-checked test spec.
 
-[Unreleased]: https://github.com/abhiram304/pomvox/compare/v0.2.3...HEAD
+[Unreleased]: https://github.com/pomvox/pomvox/compare/v0.2.5...HEAD
+[0.2.5]: https://github.com/pomvox/pomvox/compare/v0.2.4...v0.2.5
+[0.2.4]: https://github.com/pomvox/pomvox/compare/v0.2.3...v0.2.4
 [0.2.3]: https://github.com/abhiram304/pomvox/compare/v0.2.2...v0.2.3
 [0.2.2]: https://github.com/abhiram304/pomvox/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/abhiram304/pomvox/compare/v0.2.0...v0.2.1

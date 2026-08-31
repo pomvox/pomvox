@@ -54,6 +54,18 @@ preload_delay_s = 20.0
 # next use so it isn't resident 24/7 for bursty use (0 = never evict).
 idle_evict_s = 300.0
 
+[signature]
+# Optional "dictated with Pomvox" mark: one emoji appended to the end of every
+# dictation. Off by default, and an upgrade never turns it on — nothing is ever
+# added to your words unless you ask for it here or in Settings → General.
+# It goes on last, after cleanup and after the dictionary replacements, so it
+# can't become input the LLM or a replacement rule acts on. History stores it
+# as part of the final text, so re-inserting a past dictation pastes it once.
+enabled = false
+# Any emoji works; Settings offers 🎙️ 🗣️ ✨ 💬 🎧 🪶. Longer than 8 characters
+# reads as off — this is a mark, not a place to append a sentence.
+mark = "🎙️"
+
 [insert]
 method = "paste"
 
