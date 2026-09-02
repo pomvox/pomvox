@@ -4,6 +4,7 @@ on:
   pull_request:
   push:
     branches: [main]
+  workflow_dispatch:
 
 # Cancel superseded runs on the same ref (e.g. rapid pushes to a PR).
 concurrency:
@@ -127,4 +128,61 @@ jobs:
         with:
           name: swift-test-results
           path: TestResults.xcresult
+          if-no-files-found: ignore
+
+  cleanup-bench:
+    name: Cleanup model bench (manual)
+    # Manual-only: this loads the real ~2 GB cleanup model and its numbers
+    # aren't representative anyway (hosted macOS runners have no GPU
+    # passthrough, so absolute latency here won't match on-device). It's for
+    # catching gross regressions or tracking relative drift between runs —
+    # e.g. a default-model swap like #112 that only checked correctness —
+    # not a source of ground-truth numbers, and per CONTRIBUTING.md,
+    # mlx-dependent heavy work runs manually rather than as a required check.
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select latest stable Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      - name: Install XcodeGen + xcbeautify
+        run: brew install xcodegen xcbeautify
+
+      - name: Generate the Xcode project
+        working-directory: Pomvox
+        run: xcodegen generate
+
+      - name: Check package pins survived generation
+        run: ./scripts/check-package-pins.sh
+
+      - name: Cache SwiftPM
+        uses: actions/cache@v4
+        with:
+          path: .spm
+          key: spm-${{ runner.os }}-${{ hashFiles('Pomvox/project.yml') }}
+          restore-keys: spm-${{ runner.os }}-
+
+      - name: Run cleanup latency bench
+        run: |
+          set -o pipefail
+          TEST_RUNNER_POMVOX_LLM_BENCH=1 xcodebuild test \
+            -project Pomvox/Pomvox.xcodeproj \
+            -scheme Pomvox \
+            -destination 'platform=macOS' \
+            -clonedSourcePackagesDirPath .spm \
+            -only-testing:PomvoxTests/CleanupBenchTests \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            | tee bench.log | xcbeautify --renderer github-actions
+
+      - name: Upload bench log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cleanup-bench-log
+          path: bench.log
           if-no-files-found: ignore

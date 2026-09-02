@@ -1004,7 +1004,8 @@ final class NativeEngine: ObservableObject {
         }
     }
 
-    /// Race the cleanup against `timeout_s` plus a grace period. The per-chunk
+    /// Size the cleanup deadline to the transcript (`CleanupDeadline`), then
+    /// race the pass against it plus a grace period. The per-chunk
     /// deadline inside `clean()` is authoritative, but a Metal kernel that
     /// hangs without ever yielding a chunk would never reach it — the paste
     /// must not be held hostage. First result wins; a late one is discarded
@@ -1013,12 +1014,33 @@ final class NativeEngine: ObservableObject {
     private nonisolated func cleanupWithWatchdog(
         raw: String, style: String, timeoutS: Double
     ) async -> (String, CleanupStatus) {
-        await withTaskGroup(of: Optional<(String, CleanupStatus)>.self) { group in
+        // `timeout_s` budgets a TYPICAL utterance; the work is linear in the
+        // transcript, so a long one gets proportionally longer (see
+        // `CleanupDeadline`). Without this a ~1500-char dictation could not fit
+        // any fixed budget and pasted raw after burning all of it.
+        let chars = raw.count
+        let effective = CleanupDeadline.effectiveTimeoutS(base: timeoutS, chars: chars)
+        // Past the ceiling the pass provably cannot finish. The fallback is raw
+        // either way, so take it now instead of after a minute of "polishing".
+        if CleanupDeadline.isHopeless(base: timeoutS, chars: chars) {
+            NSLog(
+                "cleanup: %d chars needs ~%.0fs, past the %.0fs ceiling — pasting raw now",
+                chars, CleanupDeadline.estimateS(chars: chars), CleanupDeadline.ceilingS)
+            return (raw, .timeout)
+        }
+        if effective > timeoutS {
+            NSLog(
+                "cleanup: %d chars — deadline widened %.1fs → %.1fs", chars, timeoutS, effective)
+        }
+        return await withTaskGroup(of: Optional<(String, CleanupStatus)>.self) { group in
             group.addTask { [cleanup] in
-                await runCleanup(cleanup, text: raw, style: style, timeoutS: timeoutS)
+                await runCleanup(cleanup, text: raw, style: style, timeoutS: effective)
             }
             group.addTask {
-                try? await Task.sleep(nanoseconds: UInt64((timeoutS + 2.0) * 1_000_000_000))
+                // Must clear every credit `clean()` may award itself, or this
+                // race would cancel a pass still inside its own budget.
+                let limit = CleanupDeadline.watchdogTimeoutS(effective: effective)
+                try? await Task.sleep(nanoseconds: UInt64(limit * 1_000_000_000))
                 return nil
             }
             let first = await group.next()!

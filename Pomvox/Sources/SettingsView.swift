@@ -133,7 +133,9 @@ private struct GeneralPane: View {
                 }
                 RowDivider()
                 SettingRow(title: "Cleanup timeout",
-                           desc: "On timeout the raw transcript is inserted instead.") {
+                           desc: "The budget for a typical dictation; a long one gets "
+                               + "proportionally more. On timeout the raw transcript is "
+                               + "inserted instead.") {
                     SliderControl(value: $model.values.cleanupTimeoutS, range: 1...15, step: 0.5,
                                   label: "Cleanup timeout") {
                         String(format: "%.1f s", $0)

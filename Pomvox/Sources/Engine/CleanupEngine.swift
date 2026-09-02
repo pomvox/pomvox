@@ -481,7 +481,7 @@ actor CleanupEngine: CleanupCleaning {
         pendingCleans += 1
         defer { pendingCleans -= 1 }
         let entered = CFAbsoluteTimeGetCurrent()
-        let deadline = entered + timeoutS
+        var deadline = entered + timeoutS
         // A post-eviction dictation races the reload its own key-up fired
         // (ensureCleanupLoaded is fire-and-forget): the container is nil for
         // the ~1 s the weights take to come back, and bailing immediately
@@ -494,6 +494,20 @@ actor CleanupEngine: CleanupCleaning {
             now: CFAbsoluteTimeGetCurrent(), deadline: deadline, entered: entered)
         {
             try await Task.sleep(nanoseconds: 50_000_000)
+        }
+        // Credit the reload back. This utterance did not spend that time
+        // generating, and charging it for the weights is what made a post-idle
+        // dictation strictly likelier to paste raw than an identical warm one:
+        // on-device the two differ ONLY by this ~1.8 s intercept (identical
+        // per-character slopes — see `CleanupDeadline`). The credit is capped,
+        // so a pathological load still cannot extend the deadline without
+        // bound, and `cleanupWithWatchdog` allows for the same cap.
+        // (The warm path falls straight through the loop above, so `waited` is
+        // microseconds and nothing is credited or logged.)
+        let credit = CleanupDeadline.reloadCreditS(waited: CFAbsoluteTimeGetCurrent() - entered)
+        if credit > 0.05 {
+            deadline += credit
+            NSLog("cleanup: waited %.1fs for reload — credited to the deadline", credit)
         }
         guard let container else {
             NSLog(

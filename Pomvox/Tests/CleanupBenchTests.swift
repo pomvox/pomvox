@@ -5,9 +5,17 @@ import XCTest
 /// The M0 `pomvox-bench-llm` benchmark, relocated inside the Xcode app target —
 /// mlx-swift's default.metallib is an Xcode build-phase artifact, so this is
 /// the supported home for cleanup inference (docs/native-swift-path.md,
-/// "Toolchain & packaging"). Gate numbers to match or beat (Python production
-/// path, same machine, light style, prefix KV cache): load 3.20 s, warmup
-/// 6.98 s, per-utterance 1.20–1.28 / 2.16–2.22 / 4.41–4.73 s, ~21 tok/s decode.
+/// "Toolchain & packaging").
+///
+/// `testBenchAgainstPythonGate` benchmarks `MemoryTier.standardCleanupModel`
+/// (whatever ships as the default), not a fixed reference model — the
+/// 2026-09-02 v2-vs-v3 comparison on this machine (short/medium/long
+/// fixtures, warm prefix cache, 3 runs each) found the two models
+/// indistinguishable on speed: v2 0.66-0.71 / 1.47-1.53 / 3.23-3.33 s vs v3
+/// 0.66-0.67 / 1.45-1.51 / 3.27-3.34 s. A regression here is model-speed, not
+/// model-*choice*. It won't reproduce idle-eviction or dictionary-hint
+/// re-prefill costs, which real usage shows dominate (see the other three
+/// tests below).
 ///
 /// Skipped unless POMVOX_LLM_BENCH=1 — it loads the real ~2.3 GB model:
 ///   TEST_RUNNER_POMVOX_LLM_BENCH=1 DEVELOPER_DIR=... xcodebuild test ... \
@@ -46,7 +54,7 @@ final class CleanupBenchTests: XCTestCase {
 
         let engine = CleanupEngine()
         let t0 = CFAbsoluteTimeGetCurrent()
-        await engine.prepare(modelID: "mlx-community/Qwen3-4B-4bit")
+        await engine.prepare(modelID: MemoryTier.standardCleanupModel)
         let loaded = await engine.isLoaded
         print(String(format: "bench prepare (load+warmup): %.2fs", CFAbsoluteTimeGetCurrent() - t0))
         try XCTSkipUnless(loaded, "model failed to load — see the cleanup: NSLogs")
@@ -165,6 +173,139 @@ final class CleanupBenchTests: XCTestCase {
         try XCTSkipUnless(loaded, "model failed to load — see the cleanup: NSLogs")
         print(String(format: "bench cold-launch clean: %.2fs status=%@", elapsed, status.rawValue))
         XCTAssertEqual(status, .ok, "cold-launch first dictation pasted raw (took \(elapsed)s)")
+        XCTAssertFalse(out.isEmpty)
+        await engine.unload()
+    }
+
+    /// A transcript around the length that timed out on device (the recorded
+    /// failures were 1189–2053 chars). Long enough that no fixed `timeout_s`
+    /// the settings slider allows could ever cover it.
+    ///
+    /// Deliberately NON-repetitive. A first cut repeated one paragraph four
+    /// times and cleaned in 4.3 s against a 19.3 s budget — the model
+    /// deduplicated it down to a single paragraph, so almost nothing was
+    /// decoded. Cost tracks the OUTPUT, and `CleanupDeadline` uses input length
+    /// only as its proxy; a fixture whose output collapses measures nothing.
+    static let longDictation =
+        "okay so the next thing i wanted to walk through is the release checklist because "
+        + "we keep forgetting a step. first we tag the build and wait for notarization to "
+        + "come back green, then we bump the cask, and only after that do we cut the "
+        + "announcement. um and if the appcast is stale the updater silently does nothing, "
+        + "which is the failure mode that bit us last time. "
+        + "second thing, the dictation history window. right now it opens on the most recent "
+        + "entry but there's no way to search it, and once you have a few hundred rows that's "
+        + "basically useless, so i think we want a filter box at the top and maybe a date "
+        + "grouping in the sidebar. uh not urgent but people have asked twice now. "
+        + "third, and this is the one i keep putting off, the onboarding flow still asks for "
+        + "microphone access before it explains why it needs it, which is exactly backwards "
+        + "and i suspect it's why the drop off between install and first dictation is as bad "
+        + "as it is. we should show the one screen explaining the local only bit first. "
+        + "and then last thing, someone in the issue tracker pointed out that the menu bar "
+        + "icon doesn't change when the engine is disarmed, so you genuinely cannot tell "
+        + "whether the app is listening or not without opening the panel. that seems like a "
+        + "small fix and a real papercut so let's just do it this week. "
+        + "oh and i almost forgot, we still owe the docs a page on the custom dictionary "
+        + "because the only explanation of how the variants work lives in a pull request "
+        + "description, which nobody is going to find. even a short page with two worked "
+        + "examples would be better than what we have. um i can draft that if nobody else "
+        + "wants it, it shouldn't take more than an afternoon to write up properly."
+
+    /// The length half of the 2026-09-02 raw-paste defect, on real hardware.
+    ///
+    /// Pure policy tests (`CleanupDeadlineTests`) pin the shape of the deadline;
+    /// only this one can check the throughput constant it rests on. It asserts
+    /// both directions: the configured budget genuinely cannot clean a long
+    /// transcript (the defect), and the widened one genuinely can (the fix, and
+    /// evidence that `CleanupDeadline.throughputCharsPerS` is not optimistic).
+    func testLongDictationFitsTheWidenedDeadline() async throws {
+        try XCTSkipUnless(
+            ProcessInfo.processInfo.environment["POMVOX_LLM_BENCH"] == "1",
+            "set TEST_RUNNER_POMVOX_LLM_BENCH=1 to run the cleanup LLM acceptance")
+
+        let engine = CleanupEngine()
+        await engine.prepare(modelID: MemoryTier.standardCleanupModel)
+        let loaded = await engine.isLoaded
+        try XCTSkipUnless(loaded, "model failed to load — see the cleanup: NSLogs")
+
+        let text = Self.longDictation
+        let base = 12.5   // the on-device ~/.pomvox/config.toml value that pasted raw
+        XCTAssertGreaterThan(text.count, 1100, "fixture must be past the observed timeout floor")
+
+        // The defect, machine-independently: the work provably outruns the
+        // configured budget, so the pass could only ever have pasted raw.
+        XCTAssertGreaterThan(
+            CleanupDeadline.estimateS(chars: text.count), base,
+            "fixture no longer reproduces the fixed-budget defect")
+
+        // The fix: the deadline the policy actually hands this transcript, and
+        // whether it covers the work on real hardware. (Asserted on elapsed vs
+        // the BUDGET, not an absolute number — the manual cleanup-bench CI job
+        // runs on a hosted runner with no GPU passthrough.)
+        let effective = CleanupDeadline.effectiveTimeoutS(base: base, chars: text.count)
+        let t0 = CFAbsoluteTimeGetCurrent()
+        let (out, status) = await runCleanup(
+            engine, text: text, style: "polish", timeoutS: effective)
+        let elapsed = CFAbsoluteTimeGetCurrent() - t0
+        print(
+            String(
+                format: "bench long clean: %d chars in → %d out, %.2fs (budget %.1fs, %.0f ch/s) %@",
+                text.count, out.count, elapsed, effective,
+                Double(out.count) / elapsed, status.rawValue))
+        XCTAssertEqual(status, .ok, "long dictation still pasted raw (took \(elapsed)s)")
+        XCTAssertGreaterThan(
+            out.count, text.count / 2,
+            "output collapsed — this fixture can't measure decode cost (see longDictation)")
+        XCTAssertLessThan(
+            elapsed, effective,
+            "throughputCharsPerS is optimistic on this hardware — the widened budget is too tight")
+        await engine.unload()
+    }
+
+    /// Post-eviction on the DEFAULT model, which
+    /// `testPostEvictionCleanWaitsForReload` does not cover: it drives the
+    /// legacy `Qwen3-4B-4bit` profile, whose two prefix keys make a partial
+    /// cache (and so a full re-prefill) possible. The shipped fine-tune is the
+    /// frozen profile with exactly ONE key, so production can never take that
+    /// path — the retained caches either match or the model changed.
+    ///
+    /// Asserts cache REUSE rather than elapsed time (which is flaky): after an
+    /// evict/reload cycle with a dictionary hint set, `prepare()` must keep the
+    /// retained prefix, not rebuild it.
+    func testPostEvictionReusesPrefixCachesWithADictionaryHint() async throws {
+        try XCTSkipUnless(
+            ProcessInfo.processInfo.environment["POMVOX_LLM_BENCH"] == "1",
+            "set TEST_RUNNER_POMVOX_LLM_BENCH=1 to run the cleanup LLM acceptance")
+
+        let engine = CleanupEngine()
+        // A non-empty hint across the whole cycle: an empty one matches
+        // trivially, which is why the existing post-eviction test cannot catch
+        // a hint-keyed invalidation.
+        await engine.setTermsHint("Spell these as written: Pomvox, MLX, Parakeet.")
+        await engine.prepare(modelID: MemoryTier.standardCleanupModel)
+        let loaded = await engine.isLoaded
+        try XCTSkipUnless(loaded, "model failed to load — see the cleanup: NSLogs")
+        let cachedAfterPrepare = await engine.hasPrefixCache
+        XCTAssertTrue(cachedAfterPrepare, "nothing to retain — prefill failed")
+        let generationBefore = await engine.generation
+
+        await engine.unload()
+        let cachedAfterUnload = await engine.hasPrefixCache
+        XCTAssertTrue(cachedAfterUnload, "unload() must retain the prefix caches")
+
+        // Exactly what ensureCleanupLoaded does on the next dictation: re-apply
+        // the same hint, then reload.
+        await engine.setTermsHint("Spell these as written: Pomvox, MLX, Parakeet.")
+        await engine.prepare(modelID: MemoryTier.standardCleanupModel)
+        let reloaded = await engine.isLoaded
+        let cachedAfterReload = await engine.hasPrefixCache
+        let generationAfter = await engine.generation
+        XCTAssertTrue(reloaded)
+        XCTAssertTrue(cachedAfterReload)
+        XCTAssertGreaterThan(generationAfter, generationBefore, "no reload happened")
+
+        let (out, status) = await runCleanup(
+            engine, text: Self.fixtures[0].text, style: "polish", timeoutS: 12.5)
+        XCTAssertEqual(status, .ok, "post-eviction dictation pasted raw")
         XCTAssertFalse(out.isEmpty)
         await engine.unload()
     }
