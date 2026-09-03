@@ -112,4 +112,94 @@ final class CleanupDeadlineTests: XCTestCase {
                 "the watchdog would cancel a fully-credited pass at \(chars) chars")
         }
     }
+
+    // MARK: - cleanupWithWatchdog
+    //
+    // The wiring, not just the arithmetic. This is what decides whether a
+    // dictation gets cleaned or pastes raw, and until it was lifted out of
+    // `NativeEngine` as a free function it had no coverage at all.
+
+    /// Records the budget it was handed, and can stall to trip the watchdog.
+    /// An actor rather than a class so the task group can capture it safely.
+    actor FakeCleaner: CleanupCleaning {
+        private(set) var budgets: [Double] = []
+        private let result: String?
+        private let stallS: Double
+
+        init(result: String?, stallS: Double = 0) {
+            self.result = result
+            self.stallS = stallS
+        }
+
+        func clean(_ text: String, style: String, timeoutS: Double) async throws -> String? {
+            budgets.append(timeoutS)
+            if stallS > 0 { try await Task.sleep(nanoseconds: UInt64(stallS * 1_000_000_000)) }
+            return result
+        }
+    }
+
+    /// A short utterance must be handed exactly the configured budget.
+    func testWatchdogPassesTheConfiguredBudgetThroughForShortText() async {
+        let raw = "um so the meeting is on tuesday wait no friday"
+        let engine = FakeCleaner(result: "The meeting is on Friday.")
+        let (out, status) = await cleanupWithWatchdog(
+            engine, raw: raw, style: "polish", timeoutS: 12.5)
+        XCTAssertEqual(status, .ok)
+        XCTAssertEqual(out, "The meeting is on Friday.")
+        let budgets = await engine.budgets
+        XCTAssertEqual(budgets, [12.5], "a short utterance must not have its budget moved")
+    }
+
+    /// The fix, at the wiring level: a transcript of the length that pasted raw
+    /// on device must be handed a budget that actually covers the work.
+    func testWatchdogWidensTheBudgetForALongTranscript() async {
+        let raw = String(repeating: "a", count: 1548)
+        let engine = FakeCleaner(result: String(repeating: "a", count: 1500))
+        let (_, status) = await cleanupWithWatchdog(
+            engine, raw: raw, style: "polish", timeoutS: 12.5)
+        XCTAssertEqual(status, .ok)
+        let budgets = await engine.budgets
+        XCTAssertEqual(budgets.count, 1)
+        XCTAssertGreaterThan(budgets[0], 12.5, "the long transcript kept the unusable budget")
+        XCTAssertGreaterThan(
+            budgets[0], CleanupDeadline.estimateS(chars: raw.count),
+            "the widened budget still cannot cover the work")
+    }
+
+    /// Past the ceiling the engine must not be invoked at all — the point is to
+    /// hand back raw immediately rather than occupy the GPU for a minute first.
+    func testWatchdogSkipsTheEngineEntirelyWhenHopeless() async {
+        let raw = String(
+            repeating: "a",
+            count: Int((CleanupDeadline.ceilingS + 20) * CleanupDeadline.throughputCharsPerS))
+        let engine = FakeCleaner(result: "cleaned")
+        let t0 = CFAbsoluteTimeGetCurrent()
+        let (out, status) = await cleanupWithWatchdog(
+            engine, raw: raw, style: "polish", timeoutS: 12.5)
+        let elapsed = CFAbsoluteTimeGetCurrent() - t0
+        XCTAssertEqual(status, .timeout)
+        XCTAssertEqual(out, raw, "the raw transcript must come back untouched")
+        let budgets = await engine.budgets
+        XCTAssertTrue(budgets.isEmpty, "a hopeless pass must never reach the engine")
+        XCTAssertLessThan(elapsed, 1.0, "the whole point is that it returns at once")
+    }
+
+    /// The hung-kernel case the watchdog exists for: an engine that never
+    /// returns must still yield the raw text, bounded by `watchdogTimeoutS`.
+    func testWatchdogRecoversRawTextFromAHungEngine() async {
+        let raw = "um hello"
+        let engine = FakeCleaner(result: "Hello.", stallS: 120)
+        let base = 1.0
+        let limit = CleanupDeadline.watchdogTimeoutS(
+            effective: CleanupDeadline.effectiveTimeoutS(base: base, chars: raw.count))
+        let t0 = CFAbsoluteTimeGetCurrent()
+        let (out, status) = await cleanupWithWatchdog(
+            engine, raw: raw, style: "polish", timeoutS: base)
+        let elapsed = CFAbsoluteTimeGetCurrent() - t0
+        XCTAssertEqual(status, .timeout)
+        XCTAssertEqual(out, raw, "a hung engine must never lose the transcript")
+        XCTAssertGreaterThanOrEqual(
+            elapsed, limit - 0.5, "the watchdog fired early, cancelling a live pass")
+        XCTAssertLessThan(elapsed, limit + 5.0, "the watchdog did not fire")
+    }
 }
