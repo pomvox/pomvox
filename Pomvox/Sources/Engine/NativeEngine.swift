@@ -938,8 +938,8 @@ final class NativeEngine: ObservableObject {
             // never overlaps STT on the ANE.
             if doCleanup, !raw.isEmpty {
                 self.bus.post(.state("polishing", coldMark))
-                let (cleaned, status) = await self.cleanupWithWatchdog(
-                    raw: raw, style: style, timeoutS: timeoutS)
+                let (cleaned, status) = await cleanupWithWatchdog(
+                    self.cleanup, raw: raw, style: style, timeoutS: timeoutS)
                 text = cleaned
                 cleanupStatus = status
                 timings.stamp("cleanup")
@@ -1036,29 +1036,6 @@ final class NativeEngine: ObservableObject {
                 store.purge(now: now)
                 NotificationCenter.default.post(name: .pomvoxHistoryDidChange, object: nil)
             }
-        }
-    }
-
-    /// Race the cleanup against `timeout_s` plus a grace period. The per-chunk
-    /// deadline inside `clean()` is authoritative, but a Metal kernel that
-    /// hangs without ever yielding a chunk would never reach it — the paste
-    /// must not be held hostage. First result wins; a late one is discarded
-    /// (the zombie generation can only delay the *next* cleanup, never STT,
-    /// which runs on the ANE).
-    private nonisolated func cleanupWithWatchdog(
-        raw: String, style: String, timeoutS: Double
-    ) async -> (String, CleanupStatus) {
-        await withTaskGroup(of: Optional<(String, CleanupStatus)>.self) { group in
-            group.addTask { [cleanup] in
-                await runCleanup(cleanup, text: raw, style: style, timeoutS: timeoutS)
-            }
-            group.addTask {
-                try? await Task.sleep(nanoseconds: UInt64((timeoutS + 2.0) * 1_000_000_000))
-                return nil
-            }
-            let first = await group.next()!
-            group.cancelAll()
-            return first ?? (raw, .timeout)
         }
     }
 
