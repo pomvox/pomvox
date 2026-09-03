@@ -54,8 +54,8 @@ packages:
 settings:
   base:
     SWIFT_VERSION: "5.10"
-    MARKETING_VERSION: "0.2.5"
-    CURRENT_PROJECT_VERSION: "16"
+    MARKETING_VERSION: "0.2.6"
+    CURRENT_PROJECT_VERSION: "17"
     CODE_SIGN_STYLE: Manual
   configs:
     # Debug = daily development (M4). The native engine uses Microphone / Input
