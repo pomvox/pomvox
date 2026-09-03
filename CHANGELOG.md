@@ -7,6 +7,35 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 
 ## [Unreleased]
 
+## [0.2.6] — 2026-09-02
+
+### Fixed
+
+- **A long dictation no longer pastes as raw, uncleaned text.** Past roughly a
+  paragraph and a half, cleanup would give up and insert the unpolished
+  transcript — and it spent the entire timeout doing so, so you waited the
+  longest for the worst result. The cleanup timeout was a fixed number of
+  seconds, but the work grows with how much you said, so beyond a certain
+  length *no* setting could have been large enough. The budget now scales with
+  the length of what you dictated, and short dictations are completely
+  unchanged.
+
+  The *Settings → General → Cleanup timeout* slider now sets the budget for a
+  typical dictation rather than a hard ceiling; a long one is given
+  proportionally more. Something far past anything speakable is handed back
+  raw straight away instead of after a long wait.
+
+- **A dictation right after a break is no longer more likely to paste raw than
+  the same words said mid-flow.** After five idle minutes Pomvox unloads the
+  cleanup model to give the memory back, and reloading it takes a second or
+  two. That reload was being charged against the dictation's own timeout, so
+  the identical sentence had less time to clean simply because you'd stepped
+  away. The wait for the reload is now credited back.
+
+  Note this is *not* a speed improvement: the reload still takes the same
+  couple of seconds, and cleanup runs at exactly the speed it did before. What
+  changed is that the time is no longer taken out of your dictation's budget.
+
 ## [0.2.5] — 2026-08-30
 
 ### Added
@@ -542,6 +571,7 @@ on Apple Silicon, shipping as a signed, notarized `Pomvox.dmg`.
   runnable reference whose pure-logic modules are the cross-checked test spec.
 
 [Unreleased]: https://github.com/pomvox/pomvox/compare/v0.2.5...HEAD
+[0.2.6]: https://github.com/pomvox/pomvox/compare/v0.2.5...v0.2.6
 [0.2.5]: https://github.com/pomvox/pomvox/compare/v0.2.4...v0.2.5
 [0.2.4]: https://github.com/pomvox/pomvox/compare/v0.2.3...v0.2.4
 [0.2.3]: https://github.com/abhiram304/pomvox/compare/v0.2.2...v0.2.3
