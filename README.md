@@ -205,6 +205,12 @@ content-free, and open source: you can read exactly what leaves in
 [`Telemetry.swift`](Pomvox/Sources/Telemetry.swift). The Python reference engine
 makes no network calls at all.
 
+One more opt-in, also off by default: **Settings → Privacy → Save transcription
+pairs for evaluation** writes each dictation's raw transcript and cleaned text
+(never audio) as a JSON file in `~/.pomvox/eval`, for building an eval set from
+your own speech. It stays on this Mac — the menu bar shows it's on, and the
+Privacy pane opens or deletes the folder in one click.
+
 ## Two engines
 
 This repo contains two implementations that share `~/.pomvox/config.toml` and

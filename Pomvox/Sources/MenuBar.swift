@@ -36,10 +36,17 @@ struct MenuBarIcon: View {
 
 struct MenuBarContent: View {
     @EnvironmentObject var engine: NativeEngine
+    @EnvironmentObject var evalCapture: EvalCaptureModel
     @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         Text(statusLine)
+        // Eval capture is opt-in and writes every dictation to disk: while
+        // it's on, say so somewhere the user sees between dictations.
+        if evalCapture.isOn {
+            Label("Saving transcription pairs for evaluation", systemImage: "doc.text.magnifyingglass")
+                .accessibilityLabel("Saving transcription pairs for evaluation — on")
+        }
         // The background polish-model fetch: a note so the first raw-only
         // dictations don't look like cleanup is broken.
         if let polishLoad = engine.polishLoad {
