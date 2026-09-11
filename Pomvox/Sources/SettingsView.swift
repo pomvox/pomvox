@@ -492,8 +492,10 @@ private struct PrivacyPane: View {
     @EnvironmentObject var model: SettingsModel
     @EnvironmentObject var hub: HubModel
     @EnvironmentObject var telemetry: TelemetryModel
+    @EnvironmentObject var evalCapture: EvalCaptureModel
     @State private var storage: [StorageItem] = []
     @State private var confirmingWipe = false
+    @State private var confirmingEvalPurge = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -541,6 +543,42 @@ private struct PrivacyPane: View {
                     }
                 }
             }
+            SettingsGroup("Evaluation capture") {
+                SettingRow(title: "Save transcription pairs for evaluation",
+                           desc: "Writes one JSON file per dictation — the raw transcript, the cleaned text, and which models ran. Text only, never audio. Stays in ~/.pomvox/eval and never leaves this Mac.") {
+                    SettingToggle(isOn: evalCapture.binding, label: "Save transcription pairs for evaluation")
+                }
+                RowDivider()
+                SettingRow(title: "Captured pairs", desc: evalCapture.summary) {
+                    HStack(spacing: 8) {
+                        Button { evalCapture.revealInFinder() } label: {
+                            Text("Show in Finder").font(Typo.ui(12.5, .semibold)).foregroundStyle(Palette.ink)
+                                .padding(.horizontal, 14).padding(.vertical, 6)
+                                .background(Capsule().fill(Palette.pane2))
+                                .overlay(Capsule().stroke(Palette.hair, lineWidth: 0.5))
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("Show captured pairs in Finder")
+                        Button(role: .destructive) { confirmingEvalPurge = true } label: {
+                            Text("Delete…").font(Typo.ui(12.5, .semibold)).foregroundStyle(.white)
+                                .padding(.horizontal, 14).padding(.vertical, 6)
+                                .background(Capsule().fill(Palette.ember))
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(evalCapture.count == 0)
+                        .accessibilityLabel("Delete all captured pairs")
+                        .confirmationDialog("Delete all captured pairs?",
+                                            isPresented: $confirmingEvalPurge, titleVisibility: .visible) {
+                            Button("Delete Captured Pairs", role: .destructive) {
+                                evalCapture.purge(); storage = StorageInspector.scan()
+                            }
+                            Button("Cancel", role: .cancel) {}
+                        } message: {
+                            Text("Every captured transcript pair in ~/.pomvox/eval is removed. History is untouched. This can't be undone.")
+                        }
+                    }
+                }
+            }
             SettingsGroup("Anonymous usage stats") {
                 SettingRow(title: "Send anonymous usage stats",
                            desc: "Your choice, set on first launch. Anonymous usage events only — your voice and transcripts never leave this Mac. Toggle it either way, anytime.") {
@@ -557,7 +595,10 @@ private struct PrivacyPane: View {
                         text: "The only network calls are the one-time model download and — when you turn the toggle above on — anonymous, content-free usage stats. Verify with Little Snitch or LuLu.")
             }
         }
-        .onAppear { storage = StorageInspector.scan() }
+        .onAppear { storage = StorageInspector.scan(); evalCapture.refresh() }
+        .onReceive(NotificationCenter.default.publisher(for: .pomvoxEvalCaptureDidChange)) { _ in
+            storage = StorageInspector.scan()
+        }
     }
 }
 

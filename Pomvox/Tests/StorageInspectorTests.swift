@@ -24,16 +24,23 @@ final class StorageInspectorTests: XCTestCase {
     }
 
     func testArtifactsCoverHistoryConfigAndModels() {
-        let items = StorageInspector.artifacts(dbPath: "/x/history.db", configPath: "/x/config.toml")
+        let items = StorageInspector.artifacts(dbPath: "/x/history.db", configPath: "/x/config.toml",
+                                               evalDir: "/x/eval")
         let labels = items.map(\.label)
         XCTAssertTrue(labels.contains("Dictation history"))
         XCTAssertTrue(labels.contains("Settings"))
         XCTAssertTrue(labels.contains("Downloaded models"))
+        XCTAssertTrue(labels.contains("Evaluation pairs"))
 
         // History size counts the WAL siblings so the number isn't misleadingly low.
         let history = items.first { $0.label == "Dictation history" }!
         XCTAssertEqual(history.paths, ["/x/history.db", "/x/history.db-wal", "/x/history.db-shm"])
         // Models are flagged a directory (recursive size) and not wiped.
         XCTAssertTrue(items.first { $0.label == "Downloaded models" }!.isDir)
+        // The opt-in eval folder is listed so "what's stored" stays honest, and
+        // sized as a directory (one file per dictation).
+        let eval = items.first { $0.label == "Evaluation pairs" }!
+        XCTAssertEqual(eval.primary, "/x/eval")
+        XCTAssertTrue(eval.isDir)
     }
 }

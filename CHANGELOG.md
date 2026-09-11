@@ -7,6 +7,16 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 
 ## [Unreleased]
 
+### Added
+
+- **Save transcription pairs for evaluation** (Settings → Privacy, off by
+  default). When on, every dictation writes one JSON file to `~/.pomvox/eval`
+  with the raw transcript, the cleaned text, and which models ran — text only,
+  never audio — so you can build an eval set from your own dictations. The
+  menu bar says so while it's on; the Privacy pane shows the folder's size,
+  opens it in Finder, and deletes it in one click. Local disk only: nothing
+  about this feature has a network path.
+
 ## [0.2.6] — 2026-09-02
 
 ### Fixed

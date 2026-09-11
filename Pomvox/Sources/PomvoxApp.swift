@@ -8,6 +8,7 @@ struct PomvoxApp: App {
     @StateObject private var reinserter = ReinsertController()
     @StateObject private var engine = NativeEngine.shared
     @StateObject private var telemetry = TelemetryModel()
+    @StateObject private var evalCapture = EvalCaptureModel()
     @StateObject private var lowMemCleanup = LowMemoryCleanupModel()
     @ObservedObject private var dictionary: DictionaryStore = .shared
     @StateObject private var updater = UpdaterModel.shared
@@ -22,6 +23,7 @@ struct PomvoxApp: App {
                 .environmentObject(reinserter)
                 .environmentObject(engine)
                 .environmentObject(telemetry)
+                .environmentObject(evalCapture)
                 .environmentObject(lowMemCleanup)
                 .environmentObject(dictionary)
                 .environmentObject(updater)
@@ -41,6 +43,7 @@ struct PomvoxApp: App {
         MenuBarExtra {
             MenuBarContent()
                 .environmentObject(engine)
+                .environmentObject(evalCapture)
         } label: {
             MenuBarIcon(status: engine.status)
         }

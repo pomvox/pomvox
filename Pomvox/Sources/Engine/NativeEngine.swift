@@ -915,6 +915,11 @@ final class NativeEngine: ObservableObject {
         // Report the model that actually loaded (canonical id), not the raw
         // config string — an unrecognized value fell back to the default.
         let sttModelTelemetryID = sttModel.canonicalID
+        // Eval capture (opt-in, default off): read per dictation so the
+        // Privacy toggle applies without a re-arm. Configured cleanup id is the
+        // fallback when the model never loaded (e.g. a timeout before warm).
+        let captureEval = EvalCaptureSetting().isOn
+        let configuredCleanupModelID = cleanupModelID
         Task { [weak self] in
             guard let self else { return }
             // Stage timings mirror bench.py (t0 = key-up/auto-stop); they land
@@ -947,6 +952,9 @@ final class NativeEngine: ObservableObject {
                     NSLog("pomvox-engine: cleanup %@ — pasting raw", status.rawValue)
                 }
             }
+            // What the cleanup model produced (or fell back to), before the
+            // dictionary and the dictation mark touch it — the eval pair.
+            let cleanedForEval = text
             // Custom-word fixups run last so a misheard proper noun is corrected
             // whether cleanup polished the text, fell back to raw, or is off
             // (mirrors app.py). `final_text` stored in history reflects them.
@@ -1035,6 +1043,25 @@ final class NativeEngine: ObservableObject {
                     timingsJson: timings.json())
                 store.purge(now: now)
                 NotificationCenter.default.post(name: .pomvoxHistoryDidChange, object: nil)
+            }
+
+            // Eval capture: one local JSON file with the (raw, cleaned) pair and
+            // which models ran. Same posture as history — strictly after the
+            // paste, best-effort, never on the latency path, never audio, and a
+            // true no-op unless the user turned it on in Settings → Privacy.
+            if EvalRecord.shouldCapture(enabled: captureEval, raw: raw, pasted: text) {
+                let modelVersion: String
+                if doCleanup {
+                    modelVersion = await self.cleanup.loadedModel ?? configuredCleanupModelID
+                } else {
+                    modelVersion = "off"
+                }
+                EvalCaptureStore.shared.write(EvalRecord(
+                    rawAsr: raw, cleaned: cleanedForEval, durationS: durationS,
+                    modelVersion: modelVersion,
+                    cleanupStatus: cleanupStatus?.rawValue ?? "off",
+                    sttModel: sttModelTelemetryID, style: style,
+                    appVersion: EvalRecord.appVersion()))
             }
         }
     }

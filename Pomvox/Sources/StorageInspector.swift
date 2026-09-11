@@ -32,7 +32,8 @@ enum StorageInspector {
     /// The artifacts to list, in display order, as (label, primary path, sibling
     /// paths that count toward its size, detail). Pure — `scan` adds sizes.
     static func artifacts(dbPath: String = HistoryReader.defaultPath(),
-                          configPath: String = SettingsModel.defaultPath())
+                          configPath: String = SettingsModel.defaultPath(),
+                          evalDir: String = EvalPaths.captureDir())
         -> [(label: String, primary: String, paths: [String], detail: String, isDir: Bool)] {
         let modelsDir = NSString(string: "~/.cache/huggingface/hub").expandingTildeInPath
         return [
@@ -42,13 +43,16 @@ enum StorageInspector {
              "Your config.toml — edited right here in Settings.", false),
             ("Downloaded models", modelsDir, [modelsDir],
              "Speech + cleanup models. Re-downloadable, so a wipe leaves them.", true),
+            ("Evaluation pairs", evalDir, [evalDir],
+             "Raw + cleaned text pairs, only while capture is on. Never audio.", true),
         ]
     }
 
     /// Live report: each artifact with its current on-disk size.
     static func scan(dbPath: String = HistoryReader.defaultPath(),
-                     configPath: String = SettingsModel.defaultPath()) -> [StorageItem] {
-        artifacts(dbPath: dbPath, configPath: configPath).map { a in
+                     configPath: String = SettingsModel.defaultPath(),
+                     evalDir: String = EvalPaths.captureDir()) -> [StorageItem] {
+        artifacts(dbPath: dbPath, configPath: configPath, evalDir: evalDir).map { a in
             let bytes = a.isDir ? directorySize(a.primary)
                                 : a.paths.reduce(0) { $0 + fileSize($1) }
             return StorageItem(label: a.label, displayPath: collapseHome(a.primary),

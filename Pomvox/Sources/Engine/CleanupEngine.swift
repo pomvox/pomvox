@@ -129,6 +129,9 @@ actor CleanupEngine: CleanupCleaning {
     private var prefixKey: PrefixCacheKey?
     /// The id of the currently/last loaded model, for keying `prefixCaches`.
     private var loadedModelID: String?
+    /// The model that actually loaded (vs. the configured id) — provenance
+    /// for the eval-capture record. `nil` until the first `prepare()`.
+    var loadedModel: String? { loadedModelID }
     /// The configured cleanup style — its prefix builds FIRST so a dictation
     /// racing a cold-launch prepare() waits behind one useful prefill.
     private var preferredStyle = CleanupLogic.styles[0]
