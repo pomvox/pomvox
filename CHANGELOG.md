@@ -7,6 +7,8 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 
 ## [Unreleased]
 
+## [0.2.7] — 2026-09-10
+
 ### Added
 
 - **Save transcription pairs for evaluation** (Settings → Privacy, off by
@@ -580,7 +582,8 @@ on Apple Silicon, shipping as a signed, notarized `Pomvox.dmg`.
 - **Python reference engine** (`src/pomvox/`) — the original app, now frozen as a
   runnable reference whose pure-logic modules are the cross-checked test spec.
 
-[Unreleased]: https://github.com/pomvox/pomvox/compare/v0.2.5...HEAD
+[Unreleased]: https://github.com/pomvox/pomvox/compare/v0.2.7...HEAD
+[0.2.7]: https://github.com/pomvox/pomvox/compare/v0.2.6...v0.2.7
 [0.2.6]: https://github.com/pomvox/pomvox/compare/v0.2.5...v0.2.6
 [0.2.5]: https://github.com/pomvox/pomvox/compare/v0.2.4...v0.2.5
 [0.2.4]: https://github.com/pomvox/pomvox/compare/v0.2.3...v0.2.4
