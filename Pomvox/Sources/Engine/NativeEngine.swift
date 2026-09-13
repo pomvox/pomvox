@@ -95,7 +95,11 @@ final class NativeEngine: ObservableObject {
     // is snapshotted at arm and applied just before the deferred load so it
     // still rides inside the cached prompt prefix.
     private var cleanupPreloadDelayS = CleanupResidency.defaultPreloadDelayS
-    private var cleanupIdleEvictS = CleanupResidency.defaultIdleEvictS
+    private var cleanupIdleEvictS = CleanupResidency.lowMemoryIdleEvictS
+    /// Drops the resident cleanup model when macOS reports memory pressure —
+    /// the safety net that lets a 16 GB+ Mac keep the model loaded between
+    /// dictations instead of evicting it on a timer.
+    private var cleanupPressureSource: DispatchSourceMemoryPressure?
     /// `[cleanup] speculative` — prompt-lookup speculative decoding (default
     /// on; the kill switch is for diagnosing a suspected output difference).
     private var cleanupSpeculative = true
@@ -521,8 +525,12 @@ final class NativeEngine: ObservableObject {
     /// interval is coarse so this costs nothing at rest.
     private func startCleanupResidencyWatchdog() {
         cleanupResidencyTask?.cancel()
+        startCleanupPressureWatch()
         let evictS = cleanupIdleEvictS
-        guard evictS > 0 else { return }
+        guard evictS > 0 else {
+            NSLog("pomvox-engine: cleanup stays resident (idle_evict_s = 0); evicts on memory pressure")
+            return
+        }
         let interval = CleanupResidency.checkIntervalS(idleEvictS: evictS)
         cleanupResidencyTask = Task { [weak self, cleanup] in
             while !Task.isCancelled {
@@ -558,10 +566,42 @@ final class NativeEngine: ObservableObject {
         }
     }
 
+    /// Evict the cleanup LLM on a memory-pressure warning, whatever the idle
+    /// timer says. It reloads on next use exactly like an idle eviction; the
+    /// prefix caches are retained, so the reload is the ~2 s weight read.
+    private func startCleanupPressureWatch() {
+        cleanupPressureSource?.cancel()
+        let source = DispatchSource.makeMemoryPressureSource(
+            eventMask: [.warning, .critical], queue: .main)
+        source.setEventHandler { [weak self, cleanup] in
+            guard let self else { return }
+            let event = source.data
+            let pressured = !event.intersection([.warning, .critical]).isEmpty
+            let pending = self.cleanupLoadTask != nil
+            Task {
+                let generation = await cleanup.generation
+                let loaded = await cleanup.isLoaded
+                guard CleanupResidency.shouldEvictOnPressure(
+                    warningOrCritical: pressured, loaded: loaded, loadPending: pending)
+                else { return }
+                if await cleanup.unload(ifGeneration: generation) {
+                    await MainActor.run {
+                        self.cleanupLoadedAt = nil
+                        NSLog("pomvox-engine: memory pressure (%@) — cleanup evicted (reloads on next use)",
+                              event.contains(.critical) ? "critical" : "warning")
+                    }
+                }
+            }
+        }
+        source.activate()
+        cleanupPressureSource = source
+    }
+
     /// Cancel every cleanup-residency task (disarm / re-arm).
     private func stopCleanupResidency() {
         cleanupPreloadTask?.cancel(); cleanupPreloadTask = nil
         cleanupResidencyTask?.cancel(); cleanupResidencyTask = nil
+        cleanupPressureSource?.cancel(); cleanupPressureSource = nil
         cleanupLoadTask?.cancel(); cleanupLoadTask = nil
         cleanupLastUsedAt = nil
         cleanupLoadedAt = nil
@@ -699,7 +739,7 @@ final class NativeEngine: ObservableObject {
         cleanupPreloadDelayS = doc.double("cleanup", "preload_delay_s")
             ?? CleanupResidency.defaultPreloadDelayS
         cleanupIdleEvictS = doc.double("cleanup", "idle_evict_s")
-            ?? CleanupResidency.defaultIdleEvictS
+            ?? CleanupResidency.defaultIdleEvictS(isLowMemory: lowMem)
         cleanupSpeculative = doc.bool("cleanup", "speculative") ?? true
 
         historyEnabled = doc.bool("history", "enabled") ?? true

@@ -10,8 +10,35 @@ import Foundation
 /// Pure decision logic (last-use + now → evict?) so the timer wiring in
 /// `NativeEngine` stays a thin shell and the boundary is unit-tested.
 enum CleanupResidency {
-    /// The default idle window before the cleanup model is evicted (seconds).
-    static let defaultIdleEvictS: Double = 300
+    /// The idle window before the cleanup model is evicted on a low-memory
+    /// Mac (seconds). See `defaultIdleEvictS(isLowMemory:)` for the tiering.
+    static let lowMemoryIdleEvictS: Double = 300
+
+    /// The default for `[cleanup] idle_evict_s` when the key is absent.
+    ///
+    /// On a 16 GB+ Mac the model stays resident (`0` = never evict by idle
+    /// time). Measured on the reference M1: every first dictation after a
+    /// 5-minute break paid a ~2 s weight reload — 7 times in one day of
+    /// logs — to free ~2 GB that a 16 GB machine does not miss. Real memory
+    /// pressure still evicts it (`shouldEvictOnPressure`). The low-memory
+    /// tier keeps the timer: there the 2 GB IS the difference between
+    /// dictation working and the machine swapping. An explicit key always
+    /// wins over both.
+    static func defaultIdleEvictS(isLowMemory: Bool) -> Double {
+        isLowMemory ? lowMemoryIdleEvictS : 0
+    }
+
+    /// Whether a memory-pressure event should drop the resident model.
+    ///
+    /// Only `.warning` and `.critical` count (`.normal` is the all-clear), only
+    /// when the model is actually loaded, and never out from under a pending
+    /// load — the same rule the idle watchdog applies, because a queued load
+    /// means a dictation is about to need the weights.
+    static func shouldEvictOnPressure(
+        warningOrCritical: Bool, loaded: Bool, loadPending: Bool
+    ) -> Bool {
+        warningOrCritical && loaded && !loadPending
+    }
 
     /// The default delay after arm before the cleanup model is preloaded in the
     /// background (seconds) — long enough not to block startup, short enough
