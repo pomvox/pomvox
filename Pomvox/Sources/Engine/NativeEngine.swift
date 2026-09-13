@@ -96,6 +96,9 @@ final class NativeEngine: ObservableObject {
     // still rides inside the cached prompt prefix.
     private var cleanupPreloadDelayS = CleanupResidency.defaultPreloadDelayS
     private var cleanupIdleEvictS = CleanupResidency.defaultIdleEvictS
+    /// `[cleanup] speculative` — prompt-lookup speculative decoding (default
+    /// on; the kill switch is for diagnosing a suspected output difference).
+    private var cleanupSpeculative = true
     private var cleanupHint = ""
     private var cleanupLastUsedAt: CFAbsoluteTime?
     private var cleanupLoadedAt: CFAbsoluteTime?
@@ -426,6 +429,7 @@ final class NativeEngine: ObservableObject {
         let modelID = cleanupModelID
         let hint = cleanupHint
         let style = cleanupStyle
+        let speculative = cleanupSpeculative
         let markWarmed = markWarmedOnSuccess
         let polishGate = LineGate()
         cleanupLoadTask = Task { [cleanup, weak self] in
@@ -443,6 +447,7 @@ final class NativeEngine: ObservableObject {
                 return
             }
             await cleanup.setTermsHint(hint)
+            await cleanup.setSpeculativeDecoding(speculative)
             // Build the configured style's prompt prefix first: a dictation
             // racing this load waits behind ONE useful prefill, not both
             // (rc.1's cold-launch first dictation burned its whole deadline
@@ -695,6 +700,7 @@ final class NativeEngine: ObservableObject {
             ?? CleanupResidency.defaultPreloadDelayS
         cleanupIdleEvictS = doc.double("cleanup", "idle_evict_s")
             ?? CleanupResidency.defaultIdleEvictS
+        cleanupSpeculative = doc.bool("cleanup", "speculative") ?? true
 
         historyEnabled = doc.bool("history", "enabled") ?? true
         historyRetentionDays = doc.int("history", "retention_days") ?? 7

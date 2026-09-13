@@ -99,6 +99,24 @@ enum CleanupPromptProfile: Equatable {
         }
     }
 
+    /// Whether this profile's generations run through `SpeculativeDecoder`
+    /// with prompt-lookup drafts (see that type for the mechanism).
+    ///
+    /// `true` for the fine-tune, where it was validated character-for-character
+    /// against plain greedy decoding on the real model
+    /// (`CleanupSpeculativeDifferentialTests`). The legacy Qwen3 presets stay
+    /// on the library's generate loop for now — not because it would not work
+    /// (the loop never asks a cache what kind it is), but because nobody has
+    /// run the differential against them yet, and the guard that makes this
+    /// safe is that comparison, not the code. Flip it here once that run is
+    /// green.
+    var usesSpeculativeDecoding: Bool {
+        switch self {
+        case .legacy: return false
+        case .simpleWords: return true
+        }
+    }
+
     /// The prefix-cache key a configured style uses.
     ///
     /// `light` and `polish` collapse onto one key on the frozen path: the prompt
