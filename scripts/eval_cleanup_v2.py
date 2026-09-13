@@ -61,10 +61,20 @@ def accept_output(raw, cleaned):
     tr = raw.strip()
     if tr and tr in out and len(out) >= len(raw) + 20: return None
     if any(l.lstrip().startswith("#") for l in out.split("\n")): return None
-    if any(is_list_item_line(l) for l in out.split("\n")):
-        lr = raw.lower()
-        if "list" not in lr and "bullet" not in lr: return None
+    lines = out.split("\n")
+    if any(is_list_item_line(l) for l in lines):
+        if not invites_list(raw): return None
+        if not list_preserves_content(raw, lines): return None
     return out
+LIST_WORD = re.compile(r"\b(?:lists?|listing|bullets?|bullet\s+points?|points|steps|items|to-?dos?)\b", re.I)
+ENUM = re.compile(r"\b(?:number\s+(one|two|three|four|five|six|seven|eight|nine|ten|\d+)|(first|second|third|fourth|fifth)(?:ly)?)\b", re.I)
+def invites_list(raw):
+    if LIST_WORD.search(raw): return True
+    return len({(m.group(1) or m.group(2)).lower() for m in ENUM.finditer(raw)}) >= 2
+def list_preserves_content(raw, lines):
+    rw = words(raw)
+    iw = [w for l in lines if is_list_item_line(l) for w in re.findall(r"[a-z0-9]+", re.sub(r"^(- |\d+\. )", "", l).lower())]
+    return not iw or sum(w in rw for w in iw) >= 0.8 * len(iw)
 
 # Checks: (must_contain, must_not_contain, extra) — all case-insensitive word checks
 def has(o, s): return re.search(r"\b" + re.escape(s.lower()) + r"\b", o.lower()) is not None
