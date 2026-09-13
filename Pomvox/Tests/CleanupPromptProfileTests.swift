@@ -100,4 +100,13 @@ final class CleanupPromptProfileTests: XCTestCase {
             }
         }
     }
+
+    /// Speculative decoding is validated per model by
+    /// `CleanupSpeculativeDifferentialTests`; only the fine-tune has been
+    /// through that gate. Flipping the legacy presets on is a one-line change
+    /// that must come WITH a green differential run against them.
+    func testOnlyTheValidatedProfileSpeculates() {
+        XCTAssertTrue(CleanupPromptProfile.simpleWords.usesSpeculativeDecoding)
+        XCTAssertFalse(CleanupPromptProfile.legacy.usesSpeculativeDecoding)
+    }
 }

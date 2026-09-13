@@ -53,6 +53,12 @@ preload_delay_s = 20.0
 # Evict the cleanup LLM from memory after this many idle seconds; it reloads on
 # next use so it isn't resident 24/7 for bursty use (0 = never evict).
 idle_evict_s = 300.0
+# Speculative decoding (native engine only): the model verifies several
+# tokens per pass, drafted from the transcript itself, instead of writing one
+# token at a time. Output is byte-identical to plain decoding; this is only a
+# kill switch for diagnosing a suspected difference. Applies to the default
+# fine-tune; the Qwen3 presets keep the plain loop.
+speculative = true
 
 [signature]
 # Optional "dictated with Pomvox" mark: one emoji appended to the end of every
