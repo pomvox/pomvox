@@ -951,6 +951,13 @@ final class NativeEngine: ObservableObject {
                 if status != .ok {
                     NSLog("pomvox-engine: cleanup %@ — pasting raw", status.rawValue)
                 }
+                // The prefill/decode split for this pass, so history rows say
+                // WHERE cleanup time went, not just how much. A timeout while
+                // waiting for a reload never reached the model — its stats
+                // would be the previous dictation's, so skip them.
+                if status != .timeout, let stats = await self.cleanup.lastGenStats {
+                    for (key, value) in stats.timingNotes() { timings.note(key, value) }
+                }
             }
             // What the cleanup model produced (or fell back to), before the
             // dictionary and the dictation mark touch it — the eval pair.

@@ -40,3 +40,49 @@ final class EngineTimingsTests: XCTestCase {
         XCTAssertEqual(parsed["total"]!, 300, accuracy: 0.001)
     }
 }
+
+// MARK: - notes (flat extras riding along in timings_json)
+
+extension EngineTimingsTests {
+
+    func testNotesRideAlongAfterStagesInJson() throws {
+        var clock = 2.0
+        var t = EngineTimings(clock: { clock })
+        t.start()
+        clock = 2.3; t.stamp("stt_finalize")
+        clock = 3.3; t.stamp("cleanup")
+        t.note("cleanup_prefill_ms", 250)
+        t.note("cleanup_decode_ms", 700)
+        let parsed = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: Data(t.json().utf8)) as? [String: Double])
+        XCTAssertEqual(parsed["cleanup"]!, 1000, accuracy: 0.001)
+        XCTAssertEqual(parsed["cleanup_prefill_ms"], 250)
+        XCTAssertEqual(parsed["cleanup_decode_ms"], 700)
+        XCTAssertEqual(parsed["total"]!, 1300, accuracy: 0.001)
+        // Notes are not stages: the chain of deltas is untouched.
+        XCTAssertEqual(t.stagesMs().map(\.name), ["stt_finalize", "cleanup", "total"])
+    }
+
+    func testNoteOverwritesAndStartClears() throws {
+        var t = EngineTimings(clock: { 1.0 })
+        t.start()
+        t.stamp("stt_finalize")
+        t.note("k", 1)
+        t.note("k", 2)
+        var parsed = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: Data(t.json().utf8)) as? [String: Double])
+        XCTAssertEqual(parsed["k"], 2)
+        t.start()
+        t.stamp("stt_finalize")
+        parsed = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: Data(t.json().utf8)) as? [String: Double])
+        XCTAssertNil(parsed["k"], "start() begins a fresh utterance — old notes must not leak")
+    }
+
+    func testNotesWithoutStagesStayEmpty() {
+        var t = EngineTimings(clock: { 1.0 })
+        t.start()
+        t.note("k", 1)
+        XCTAssertEqual(t.json(), "{}", "a note alone is not a measured utterance")
+    }
+}
