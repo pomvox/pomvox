@@ -131,4 +131,26 @@ final class CleanupResidencyTests: XCTestCase {
                 modelID: "mlx-community/Qwen3-4B-4bit",
                 hint: "- Keep these terms spelled exactly: Salammagari.\n"))
     }
+
+    // MARK: - tiered default + memory pressure (2026-09-13)
+
+    func testSixteenGigMacsKeepTheModelResidentByDefault() {
+        XCTAssertEqual(CleanupResidency.defaultIdleEvictS(isLowMemory: false), 0,
+                       "0 = never evict by idle time; pressure eviction still applies")
+        XCTAssertEqual(CleanupResidency.defaultIdleEvictS(isLowMemory: true),
+                       CleanupResidency.lowMemoryIdleEvictS)
+        XCTAssertEqual(CleanupResidency.lowMemoryIdleEvictS, 300)
+    }
+
+    func testPressureEvictsOnlyALoadedModelWithNoLoadPending() {
+        XCTAssertTrue(CleanupResidency.shouldEvictOnPressure(
+            warningOrCritical: true, loaded: true, loadPending: false))
+        XCTAssertFalse(CleanupResidency.shouldEvictOnPressure(
+            warningOrCritical: false, loaded: true, loadPending: false), "all-clear is not pressure")
+        XCTAssertFalse(CleanupResidency.shouldEvictOnPressure(
+            warningOrCritical: true, loaded: false, loadPending: false), "nothing to drop")
+        XCTAssertFalse(CleanupResidency.shouldEvictOnPressure(
+            warningOrCritical: true, loaded: true, loadPending: true),
+            "a queued load means a dictation is about to need the weights")
+    }
 }

@@ -51,7 +51,10 @@ timeout_s = 5.0   # hard deadline; on timeout the raw transcript is inserted
 # arm — whichever comes first (0 = only on first use).
 preload_delay_s = 20.0
 # Evict the cleanup LLM from memory after this many idle seconds; it reloads on
-# next use so it isn't resident 24/7 for bursty use (0 = never evict).
+# next use (0 = never evict by idle time). The native engine's default depends
+# on the Mac: 16 GB+ keeps the model resident (0) so the first dictation after
+# a break doesn't pay a ~2 s reload, and drops it only under real memory
+# pressure; <= 8 GB keeps the 300 s timer. Set it here to override either.
 idle_evict_s = 300.0
 # Speculative decoding (native engine only): the model verifies several
 # tokens per pass, drafted from the transcript itself, instead of writing one
