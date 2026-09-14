@@ -183,6 +183,14 @@ actor CleanupEngine: CleanupCleaning {
 
     var isLoaded: Bool { container != nil }
 
+    /// The prefill/decode split of the most recent generation that reached the
+    /// model (warmup included). Read by `NativeEngine` right after a cleanup
+    /// pass to fold into `history.timings_json`; `nil` until the first
+    /// generation. A pass that bailed before generating (model not loaded,
+    /// deadline hit while waiting for the reload) leaves the previous value —
+    /// callers key off `CleanupStatus` to know whether a generation ran.
+    private(set) var lastGenStats: CleanupGenStats?
+
     /// Whether at least one prompt prefix is prefilled and available for reuse.
     ///
     /// For diagnostics and for the differential test, which would otherwise
@@ -558,7 +566,7 @@ actor CleanupEngine: CleanupCleaning {
         let cached = prefixCaches[prefixKeyForStyle]
         let hint = termsHint
 
-        return try await container.perform { context in
+        let (text, stats): (String?, CleanupGenStats?) = try await container.perform { context in
             var tokens = try await Self.renderTokens(
                 context, text: text, style: style, termsHint: hint,
                 profile: profile, frozenSystem: frozen)
@@ -581,6 +589,7 @@ actor CleanupEngine: CleanupCleaning {
                 cache: cache, parameters: params, context: context)
             let tGen = CFAbsoluteTimeGetCurrent()
             var parts: [String] = []
+            var stats: CleanupGenStats?
             for await generation in stream {
                 switch generation {
                 case .chunk(let piece):
@@ -589,9 +598,16 @@ actor CleanupEngine: CleanupCleaning {
                         // Returning ends stream consumption; the generation
                         // task is cancelled via the stream's onTermination.
                         NSLog("cleanup: deadline %.1fs hit, falling back to raw", timeoutS)
-                        return nil
+                        return (nil, nil)
                     }
                 case .info(let info):
+                    var s = CleanupGenStats()
+                    s.promptTokens = info.promptTokenCount
+                    s.prefillMs = info.promptTime * 1000
+                    s.decodeTokens = info.generationTokenCount
+                    s.decodeMs = info.generateTime * 1000
+                    s.cached = cache != nil
+                    stats = s
                     // A legit cleanup is at most ~input-sized; hitting the
                     // 2x-input cap means a runaway (echo, analysis, invention)
                     // that was truncated — rc.1 pasted one mid-sentence. Raw
@@ -600,7 +616,7 @@ actor CleanupEngine: CleanupCleaning {
                         NSLog(
                             "cleanup: hit the %d-token cap — runaway output, falling back to raw",
                             maxTokens)
-                        return nil
+                        return (nil, stats)
                     }
                     NSLog(
                         "cleanup: gen %.2fs prefill=%dtok@%.0ftps decode=%dtok@%.1ftps cached=%@",
@@ -612,8 +628,10 @@ actor CleanupEngine: CleanupCleaning {
                     break
                 }
             }
-            return parts.joined()
+            return (parts.joined(), stats)
         }
+        if let stats { lastGenStats = stats }
+        return text
     }
 
     /// One-shot "what might the STT model write for ⟨term⟩?" generation for

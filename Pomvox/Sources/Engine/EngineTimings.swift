@@ -8,6 +8,9 @@ struct EngineTimings {
     private let clock: () -> Double
     private var t0: Double?
     private var stamps: [(name: String, t: Double)] = []
+    /// Flat extra measurements (not stages): merged into `json()` after the
+    /// stages so the Python-shaped keys keep their order. Cleared by `start`.
+    private var notes: [(name: String, value: Double)] = []
 
     init(clock: @escaping () -> Double = { CFAbsoluteTimeGetCurrent() }) {
         self.clock = clock
@@ -17,12 +20,26 @@ struct EngineTimings {
     mutating func start() {
         t0 = clock()
         stamps = []
+        notes = []
     }
 
     /// Mark t0 explicitly (the engine already holds `stopAt` from the tap thread).
     mutating func start(at t: Double) {
         t0 = t
         stamps = []
+        notes = []
+    }
+
+    /// Record a non-stage measurement under its own key (e.g. the cleanup
+    /// prefill/decode split). Not part of `stagesMs()` — it is not a delta on
+    /// the stamp chain — but it rides along in `json()` so history rows carry
+    /// it. A repeated key overwrites the earlier value.
+    mutating func note(_ name: String, _ value: Double) {
+        if let i = notes.firstIndex(where: { $0.name == name }) {
+            notes[i].value = value
+        } else {
+            notes.append((name, value))
+        }
     }
 
     mutating func stamp(_ name: String) {
@@ -55,8 +72,8 @@ struct EngineTimings {
     func json() -> String {
         let stages = stagesMs()
         guard !stages.isEmpty else { return "{}" }
-        let body = stages
-            .map { "\"\($0.name)\": \($0.ms)" }
+        let body = (stages.map { ($0.name, $0.ms) } + notes.map { ($0.name, $0.value) })
+            .map { "\"\($0.0)\": \($0.1)" }
             .joined(separator: ", ")
         return "{\(body)}"
     }
