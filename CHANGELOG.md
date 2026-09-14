@@ -7,6 +7,48 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 
 ## [Unreleased]
 
+## [0.2.8] — 2026-09-13
+
+### Changed
+
+- **Cleanup is roughly twice as fast.** The cleanup model now writes several
+  words per step instead of one, by guessing the next few from what you
+  actually said and checking the guess in a single pass — a dictation is
+  mostly your own words back, so the guesses land most of the time. What
+  comes out is *character-for-character identical* to before; only the wait
+  changed. Measured on an M1: a 15-second dictation went from 3.8 s to about
+  2.0 s of cleanup, a long one from 16.5 s to about 9.5 s. If you ever want
+  to compare, `[cleanup] speculative = false` in `config.toml` turns it off.
+
+- **On Macs with 16 GB or more, the cleanup model stays loaded between
+  dictations.** It used to be unloaded after five idle minutes, so the first
+  dictation after a break waited a couple of seconds for it to come back.
+  It now stays resident and is dropped only if macOS reports memory
+  pressure. Macs with 8 GB keep the five-minute unload; `[cleanup]
+  idle_evict_s` overrides either.
+
+### Fixed
+
+- **Dictated lists finally paste as lists.** Saying "number one …, number
+  two …, number three …" or "first …, second …, third …" now pastes as a
+  numbered or bulleted list. The cleanup model had been rendering these
+  correctly all along; a safety check written for the previous model threw
+  the result away unless you literally said the word "list" or "bullet",
+  and pasted the raw transcript instead. The check now recognises spoken
+  list cues and counted enumerations — and still refuses a list whose items
+  aren't made of your words.
+
+- **"New line", "new paragraph" and "bullet" now do what they say.** Spoken
+  layout commands become line breaks, paragraph breaks and bullet points,
+  even when cleanup fell back to the raw transcript. Ordinary uses stay
+  words: "a new line of products", "silver bullet".
+
+### Under the hood
+
+- History rows record where cleanup time went (prompt reading vs writing,
+  and how many guessed words were accepted), so speed regressions can be
+  queried rather than guessed at.
+
 ## [0.2.7] — 2026-09-10
 
 ### Added
@@ -582,7 +624,8 @@ on Apple Silicon, shipping as a signed, notarized `Pomvox.dmg`.
 - **Python reference engine** (`src/pomvox/`) — the original app, now frozen as a
   runnable reference whose pure-logic modules are the cross-checked test spec.
 
-[Unreleased]: https://github.com/pomvox/pomvox/compare/v0.2.7...HEAD
+[Unreleased]: https://github.com/pomvox/pomvox/compare/v0.2.8...HEAD
+[0.2.8]: https://github.com/pomvox/pomvox/compare/v0.2.7...v0.2.8
 [0.2.7]: https://github.com/pomvox/pomvox/compare/v0.2.6...v0.2.7
 [0.2.6]: https://github.com/pomvox/pomvox/compare/v0.2.5...v0.2.6
 [0.2.5]: https://github.com/pomvox/pomvox/compare/v0.2.4...v0.2.5
