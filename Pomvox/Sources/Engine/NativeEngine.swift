@@ -1008,6 +1008,11 @@ final class NativeEngine: ObservableObject {
             // What the cleanup model produced (or fell back to), before the
             // dictionary and the dictation mark touch it — the eval pair.
             let cleanedForEval = text
+            // Spoken layout commands ("new line", "new paragraph", "bullet")
+            // become layout here, on the cleaned text AND on the raw fallback:
+            // the model renders them as words, and a timeout must not also
+            // eat them. Deterministic, so it is not part of the eval pair.
+            text = SpokenFormatting.apply(text)
             // Custom-word fixups run last so a misheard proper noun is corrected
             // whether cleanup polished the text, fell back to raw, or is off
             // (mirrors app.py). `final_text` stored in history reflects them.
