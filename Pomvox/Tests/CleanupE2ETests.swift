@@ -75,6 +75,11 @@ final class CleanupE2ETests: XCTestCase {
         Case(name: "list only when asked",
              raw: "let's make a list of things to pack shirts socks toothbrush and a charger",
              mustKeep: ["shirts", "charger"], mustDrop: [], expectAccepted: true),
+        // 2026-09-13: the guard used to throw this away (no "list"/"bullet" in
+        // the raw) even though the model renders it correctly.
+        Case(name: "numbered when the speaker counted",
+             raw: "number one fix the login bug number two update the docs number three ship it on friday",
+             mustKeep: ["login", "docs", "Friday"], mustDrop: [], expectAccepted: true),
         Case(name: "no list without the trigger",
              raw: "so first we grab coffee then we drive to the office then we start the meeting",
              mustKeep: ["coffee"], mustDrop: [], expectAccepted: true),

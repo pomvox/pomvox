@@ -317,6 +317,30 @@ def test_reject_unrequested_bullets():
     assert accept_output("we need mangoes and grapes", "- Mangoes\n- Grapes") is None
 
 
+def test_accept_numbered_list_when_the_speaker_counted():
+    # 2026-09-13: the fine-tune renders this correctly; the old guard rejected
+    # it because the raw contains neither "list" nor "bullet".
+    raw = "number one fix the login bug number two update the docs number three ship it on friday"
+    out = "1. Fix the login bug\n2. Update the docs\n3. Ship it on Friday"
+    assert accept_output(raw, out) == out
+    assert accept_output(
+        "so there are three things first we fix the login bug second we update the docs and third we ship on friday",
+        "Three things:\n- Fix the login bug\n- Update the docs\n- Ship on Friday",
+    ) is not None
+
+
+def test_one_ordinal_is_not_an_invitation():
+    assert accept_output("first of all thanks for the update", "- Thanks for the update") is None
+    assert accept_output("one more thing we sold two thousand units", "- Two thousand units") is None
+
+
+def test_an_invited_list_must_be_made_of_the_speakers_words():
+    assert accept_output(
+        "number one fix the login bug number two update the docs",
+        "1. Buy milk\n2. Call the dentist",
+    ) is None
+
+
 def test_accept_requested_bullets():
     assert (
         accept_output("make a list of groceries mangoes and grapes", "- Mangoes\n- Grapes")

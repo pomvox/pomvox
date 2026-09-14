@@ -219,18 +219,71 @@ def accept_output(raw: str, cleaned: str) -> str | None:
         return None
     if any(line.lstrip().startswith("#") for line in out.splitlines()):
         return None
-    # Lists only on request: with the list few-shots in the prompt the model
-    # occasionally formats ordinary speech ("Go ahead." -> "- Go ahead.").
-    # Every list trigger phrase the prompt names contains "list" or "bullet",
-    # so a bulleted or numbered output without one in the raw is a reformat,
-    # not a cleanup.
-    if any(
-        line.startswith("- ") or re.match(r"\d+\. ", line) for line in out.splitlines()
-    ):
-        lowered_raw = raw.lower()
-        if "list" not in lowered_raw and "bullet" not in lowered_raw:
+    # Lists only when invited: a spoken cue ("list", "bullet points", "steps")
+    # or a counted enumeration ("number one …, number two …", "first …,
+    # second …"). Until 2026-09-13 only the literal substrings "list"/"bullet"
+    # counted, so a correct "1. Fix the login bug\n2. Update the docs" for
+    # "number one fix the login bug number two update the docs" was thrown
+    # away. An accepted list must also be made of the speaker's words.
+    lines = out.splitlines()
+    if any(_is_list_item_line(line) for line in lines):
+        if not _invites_list(raw):
+            return None
+        if not _list_preserves_content(raw, lines):
             return None
     return out
+
+
+def _is_list_item_line(line: str) -> bool:
+    return line.startswith("- ") or re.match(r"\d+\. ", line) is not None
+
+
+_LIST_WORD_CUE = re.compile(
+    r"\b(?:lists?|listing|bullets?|bullet\s+points?|points|steps|items|to-?dos?)\b",
+    re.IGNORECASE,
+)
+_ENUMERATION_CUE = re.compile(
+    r"\b(?:number\s+(one|two|three|four|five|six|seven|eight|nine|ten|\d+)"
+    r"|(first|second|third|fourth|fifth)(?:ly)?)\b",
+    re.IGNORECASE,
+)
+
+
+def _invites_list(raw: str) -> bool:
+    """Mirrors CleanupLogic.rawInvitesList; keep the two in sync.
+
+    Either an explicit list word, or at least two DISTINCT enumeration markers
+    ("number one" + "number two", "first" + "second"). A bare "one … two …
+    three" is deliberately not a cue.
+    """
+    if _LIST_WORD_CUE.search(raw):
+        return True
+    markers = {
+        (m.group(1) or m.group(2)).lower() for m in _ENUMERATION_CUE.finditer(raw)
+    }
+    return len(markers) >= 2
+
+
+def _strip_list_marker(line: str) -> str:
+    if line.startswith("- "):
+        return line[2:]
+    return re.sub(r"^\d+\. ", "", line)
+
+
+def _list_preserves_content(raw: str, lines: list[str]) -> bool:
+    """Mirrors CleanupLogic.listPreservesContent: 80 % of the item words
+    must come from the raw transcript."""
+    raw_words = set(re.findall(r"[a-z0-9]+", raw.lower()))
+    item_words = [
+        w
+        for line in lines
+        if _is_list_item_line(line)
+        for w in re.findall(r"[a-z0-9]+", _strip_list_marker(line).lower())
+    ]
+    if not item_words:
+        return True
+    covered = sum(1 for w in item_words if w in raw_words)
+    return covered >= 0.8 * len(item_words)
 
 
 def run_cleanup(engine, text: str, style: str, timeout_s: float) -> tuple[str, str]:

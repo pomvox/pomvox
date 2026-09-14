@@ -272,16 +272,84 @@ enum CleanupLogic {
         }) {
             return nil
         }
-        // Lists only on request: with the list few-shots in the prompt the model
-        // occasionally formats ordinary speech ("Go ahead." -> "- Go ahead.").
-        // Every list trigger phrase the prompt names contains "list" or "bullet",
-        // so a bulleted or numbered output without one in the raw is a reformat,
-        // not a cleanup.
-        if out.split(separator: "\n").contains(where: { isListItemLine($0) }) {
-            let loweredRaw = raw.lowercased()
-            if !loweredRaw.contains("list"), !loweredRaw.contains("bullet") { return nil }
+        // Lists only when invited: with the list few-shots in the prompt the
+        // legacy model occasionally formats ordinary speech ("Go ahead." ->
+        // "- Go ahead."). An invitation is a spoken cue — "list", "bullet
+        // points", "steps" — or a counted enumeration ("number one …, number
+        // two …", "first …, second …"). Until 2026-09-13 only the literal
+        // substrings "list"/"bullet" counted, so the fine-tune's correct
+        // "1. Fix the login bug\n2. Update the docs" for "number one fix the
+        // login bug number two update the docs" was thrown away and the raw
+        // transcript pasted. An accepted list must also be made of the
+        // speaker's words (`listPreservesContent`): a reformat that invents
+        // items is still a rewrite, not a cleanup.
+        let lines = out.split(separator: "\n")
+        if lines.contains(where: { isListItemLine($0) }) {
+            if !rawInvitesList(raw) { return nil }
+            if !listPreservesContent(raw: raw, lines: lines) { return nil }
         }
         return out
+    }
+
+    /// Spoken cues that make a list a legitimate rendering of the transcript.
+    ///
+    /// Two kinds, either suffices:
+    /// - an explicit word: list/listing, bullet(s)/bullet point(s), points,
+    ///   steps, items, to-do(s);
+    /// - a counted enumeration: at least two DISTINCT markers from "number one
+    ///   … number ten" / "number 1 …" or "first … fifth" (with or without
+    ///   "-ly"). One marker is not a list ("first of all, thanks"); a bare
+    ///   "one … two … three" is deliberately NOT a cue — "one more thing",
+    ///   "two thousand units" are ordinary content.
+    ///
+    /// Mirrors `_invites_list` in `src/pomvox/cleanup.py`; keep the two in sync.
+    static func rawInvitesList(_ raw: String) -> Bool {
+        let range = NSRange(raw.startIndex..<raw.endIndex, in: raw)
+        if listWordCue.firstMatch(in: raw, options: [], range: range) != nil { return true }
+        var markers = Set<String>()
+        for match in enumerationCue.matches(in: raw, options: [], range: range) {
+            // Group 1 is the count after "number", group 2 the ordinal; one of
+            // them is empty for any given match.
+            for group in 1...2 {
+                guard let r = Range(match.range(at: group), in: raw) else { continue }
+                markers.insert(raw[r].lowercased())
+            }
+        }
+        return markers.count >= 2
+    }
+
+    private static let listWordCue = try! NSRegularExpression(
+        pattern: #"\b(?:lists?|listing|bullets?|bullet\s+points?|points|steps|items|to-?dos?)\b"#,
+        options: [.caseInsensitive])
+
+    /// Capture group 1 is the marker itself, normalized by the caller: the
+    /// count word after "number", or the ordinal without its "-ly".
+    private static let enumerationCue = try! NSRegularExpression(
+        pattern:
+            #"\b(?:number\s+(one|two|three|four|five|six|seven|eight|nine|ten|\d+)|(first|second|third|fourth|fifth)(?:ly)?)\b"#,
+        options: [.caseInsensitive])
+
+    /// Every word in the list items (marker stripped) must come from the raw
+    /// transcript — 80 % coverage, so a corrected or re-spelled word here and
+    /// there passes while invented items do not. Non-item lines (a "Shopping
+    /// list:" header) are not checked; the length bounds above cover them.
+    ///
+    /// Mirrors `_list_preserves_content` in `src/pomvox/cleanup.py`.
+    static func listPreservesContent(raw: String, lines: [Substring]) -> Bool {
+        let rawWords = words(raw)
+        var itemWords: [String] = []
+        for line in lines where isListItemLine(line) {
+            itemWords += wordList(String(stripListMarker(line)))
+        }
+        guard !itemWords.isEmpty else { return true }
+        let covered = itemWords.filter { rawWords.contains($0) }.count
+        return Double(covered) >= 0.8 * Double(itemWords.count)
+    }
+
+    private static func stripListMarker(_ line: Substring) -> Substring {
+        if line.hasPrefix("- ") { return line.dropFirst(2) }
+        let digits = line.prefix(while: { $0.isASCII && $0.isNumber })
+        return line.dropFirst(digits.count + 2)
     }
 
     /// A "- " bullet or a "1. " numbered item, Python's
@@ -296,10 +364,14 @@ enum CleanupLogic {
     /// ASCII-only classes on both sides — identical on the ASCII transcripts
     /// Parakeet emits (same caveat as the `count` comparisons above).
     private static func words(_ s: String) -> Set<String> {
-        Set(
-            s.lowercased()
-                .split(whereSeparator: { !($0.isASCII && ($0.isLetter || $0.isNumber)) })
-                .map(String.init))
+        Set(wordList(s))
+    }
+
+    /// The same split, in order and with repeats — for coverage counts.
+    private static func wordList(_ s: String) -> [String] {
+        s.lowercased()
+            .split(whereSeparator: { !($0.isASCII && ($0.isLetter || $0.isNumber)) })
+            .map(String.init)
     }
 }
 

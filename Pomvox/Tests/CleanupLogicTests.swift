@@ -422,6 +422,45 @@ final class CleanupLogicTests: XCTestCase {
             cleaned: "To dos:\n1. Get groceries\n2. Go to Walmart"))
     }
 
+    // MARK: - enumeration cues (2026-09-13: "number one …" was thrown away)
+
+    func testAcceptNumberedListWhenTheSpeakerCounted() {
+        // The shipped fine-tune renders this correctly; the old guard rejected
+        // it because the raw contains neither "list" nor "bullet".
+        let raw = "number one fix the login bug number two update the docs number three ship it on friday"
+        let out = "1. Fix the login bug\n2. Update the docs\n3. Ship it on Friday"
+        XCTAssertEqual(CleanupLogic.acceptOutput(raw: raw, cleaned: out), out)
+        XCTAssertNotNil(CleanupLogic.acceptOutput(
+            raw: "so there are three things first we fix the login bug second we update the docs and third we ship on friday",
+            cleaned: "Three things:\n- Fix the login bug\n- Update the docs\n- Ship on Friday"))
+        XCTAssertNotNil(CleanupLogic.acceptOutput(
+            raw: "give me the steps open the app tap settings and turn on cleanup",
+            cleaned: "- Open the app\n- Tap settings\n- Turn on cleanup"))
+    }
+
+    func testOneOrdinalIsNotAnInvitation() {
+        XCTAssertFalse(CleanupLogic.rawInvitesList("first of all thanks for the update"))
+        XCTAssertFalse(CleanupLogic.rawInvitesList("one more thing we sold two thousand units"))
+        XCTAssertFalse(CleanupLogic.rawInvitesList("we need mangoes and grapes"))
+        XCTAssertTrue(CleanupLogic.rawInvitesList("firstly the budget secondly the hiring plan"))
+        XCTAssertTrue(CleanupLogic.rawInvitesList("Number 1 do this. Number 2 do that."))
+        XCTAssertTrue(CleanupLogic.rawInvitesList("here are my to-dos for today"))
+        XCTAssertTrue(CleanupLogic.rawInvitesList("give me bullet points"))
+        XCTAssertNil(CleanupLogic.acceptOutput(
+            raw: "first of all thanks for the update", cleaned: "- Thanks for the update"))
+    }
+
+    func testAnInvitedListMustBeMadeOfTheSpeakersWords() {
+        // Right cue, invented items: still a rewrite, still rejected.
+        XCTAssertNil(CleanupLogic.acceptOutput(
+            raw: "number one fix the login bug number two update the docs",
+            cleaned: "1. Buy milk\n2. Call the dentist"))
+        // Punctuation, casing and a header do not count against coverage.
+        XCTAssertNotNil(CleanupLogic.acceptOutput(
+            raw: "make a list we need bananas oranges and grapes",
+            cleaned: "Shopping list:\n- Bananas\n- Oranges\n- Grapes"))
+    }
+
     // MARK: - list coverage (rc.1: announcements + numbered enumerations)
 
     func testListRuleCoversNumberedEnumerations() {
