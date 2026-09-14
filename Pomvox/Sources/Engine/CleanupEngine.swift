@@ -42,6 +42,18 @@ enum CleanupPrepareOutcome: Sendable {
     }
 }
 
+/// Which generation loop `CleanupEngine.clean()` runs.
+enum CleanupDecoding: Equatable, Sendable {
+    /// `MLXLMCommon.generate` — one token per forward pass, streamed.
+    case library
+    /// `SpeculativeDecoder` with drafting off: the same one-token-per-pass
+    /// greedy decode, written against the plain forward pass. Exists so the
+    /// differential can isolate what drafting changes (nothing, or it fails).
+    case greedyLoop
+    /// `SpeculativeDecoder` with prompt-lookup drafts — the fast path.
+    case speculative
+}
+
 actor CleanupEngine: CleanupCleaning {
 
     /// One prefix key's static prompt prefix (system + few-shot examples, ~95%
@@ -111,8 +123,28 @@ actor CleanupEngine: CleanupCleaning {
     /// ask one engine for the uncached answer.
     private let prefixCacheDisabled: Bool
 
-    init(prefixCacheDisabled: Bool = false) {
+    /// Which generation loop `clean()` runs. `nil` (production) resolves per
+    /// profile and the `[cleanup] speculative` config flag; tests pin one so
+    /// the differential can compare two loops on one model.
+    private let forcedDecoding: CleanupDecoding?
+
+    init(prefixCacheDisabled: Bool = false, decoding: CleanupDecoding? = nil) {
         self.prefixCacheDisabled = prefixCacheDisabled
+        self.forcedDecoding = decoding
+    }
+
+    /// `[cleanup] speculative` — the user's kill switch for the speculative
+    /// loop (default on). Set before `prepare()` like the terms hint; it is
+    /// read per `clean()`, so flipping it later also works.
+    private var speculativeEnabled = true
+
+    func setSpeculativeDecoding(_ enabled: Bool) { speculativeEnabled = enabled }
+
+    /// The loop the next `clean()` will use.
+    var decoding: CleanupDecoding {
+        if let forcedDecoding { return forcedDecoding }
+        guard profile.usesSpeculativeDecoding else { return .library }
+        return speculativeEnabled ? .speculative : .greedyLoop
     }
 
     /// Whether this engine may prefill a reusable prompt prefix: the profile's
@@ -565,6 +597,7 @@ actor CleanupEngine: CleanupCleaning {
         Memory.clearCache()
         let cached = prefixCaches[prefixKeyForStyle]
         let hint = termsHint
+        let decoding = self.decoding
 
         let (text, stats): (String?, CleanupGenStats?) = try await container.perform { context in
             var tokens = try await Self.renderTokens(
@@ -582,6 +615,14 @@ actor CleanupEngine: CleanupCleaning {
                 cache = cached.cache.map { $0.copy() }
             }
             let maxTokens = max(64, min(2 * context.tokenizer.encode(text: text).count, 1024))
+
+            if decoding != .library {
+                return Self.generateInLoop(
+                    context, tokens: tokens, cache: cache, text: text,
+                    speculative: decoding == .speculative, maxTokens: maxTokens,
+                    deadline: deadline, timeoutS: timeoutS)
+            }
+
             let params = GenerateParameters(maxTokens: maxTokens, temperature: 0.0)
 
             let stream = try MLXLMCommon.generate(
@@ -632,6 +673,104 @@ actor CleanupEngine: CleanupCleaning {
         }
         if let stats { lastGenStats = stats }
         return text
+    }
+
+    /// Run one cleanup generation through `SpeculativeDecoder` (with or
+    /// without drafts) and turn its stop reason into `clean()`'s contract:
+    /// text on a clean EOS, `nil` on the deadline or the runaway cap.
+    private static func generateInLoop(
+        _ context: ModelContext, tokens: [Int], cache: [KVCache]?, text: String,
+        speculative: Bool, maxTokens: Int, deadline: Double, timeoutS: Double
+    ) -> (String?, CleanupGenStats?) {
+        let tGen = CFAbsoluteTimeGetCurrent()
+        let drafter = speculative ? PromptLookupDrafter() : nil
+        // The drafter's lookup table: the transcript as the tokenizer sees it
+        // on its own (no chat-template neighbours). Boundary tokens can differ
+        // from the in-prompt encoding; the n-gram search does not care.
+        let lookup = speculative ? context.tokenizer.encode(text: text, addSpecialTokens: false) : []
+        let result = SpeculativeDecoder.generate(
+            model: context.model, prompt: tokens, cache: cache, lookup: lookup,
+            drafter: drafter, maxTokens: maxTokens,
+            stopTokens: stopTokenIds(context), deadline: deadline, cached: cache != nil)
+        let stats = result.stats
+        switch result.stop {
+        case .deadline:
+            NSLog("cleanup: deadline %.1fs hit, falling back to raw", timeoutS)
+            return (nil, stats)
+        case .cap:
+            // Same rule as the library path: a legit cleanup is at most
+            // ~input-sized, so the 2x cap means a runaway that was truncated.
+            NSLog(
+                "cleanup: hit the %d-token cap — runaway output, falling back to raw",
+                maxTokens)
+            return (nil, stats)
+        case .eos:
+            break
+        }
+        let spec = stats.specDrafted > 0
+            ? String(
+                format: " spec=%d/%d rounds=%d", stats.specAccepted, stats.specDrafted,
+                stats.specRounds)
+            : (speculative ? " spec=0/0" : "")
+        NSLog(
+            "cleanup: gen %.2fs prefill=%dtok@%.0ftps decode=%dtok@%.1ftps cached=%@%@",
+            CFAbsoluteTimeGetCurrent() - tGen,
+            stats.promptTokens, stats.prefillTokensPerSecond,
+            stats.decodeTokens, stats.decodeTokensPerSecond,
+            cache == nil ? "no" : "prefix", spec)
+        let out = context.tokenizer.decode(tokenIds: result.tokens, skipSpecialTokens: true)
+        return (out, stats)
+    }
+
+    /// Every id that ends a generation — the same set `MLXLMCommon.generate`
+    /// builds (its helper is private): the configuration's EOS ids, the
+    /// tokenizer's EOS, any extra EOS strings, and the unknown token.
+    private static func stopTokenIds(_ context: ModelContext) -> Set<Int> {
+        var ids = context.configuration.eosTokenIds
+        if let eos = context.tokenizer.eosTokenId { ids.insert(eos) }
+        for token in context.configuration.extraEOSTokens {
+            if let id = context.tokenizer.convertTokenToId(token) { ids.insert(id) }
+        }
+        if let unk = context.tokenizer.unknownTokenId { ids.insert(unk) }
+        return ids
+    }
+
+    /// Test probe: median wall time of one forward pass carrying `t` tokens on
+    /// top of a ~300-token cache, per `t` in `tokenCounts`. Feeds
+    /// `SpeculativeDecoder.DraftPolicy`'s budgets; see
+    /// `CleanupPassCostProbeTests`.
+    func probePassCost(tokenCounts: [Int]) async -> [(Int, Double)] {
+        guard let container else { return [] }
+        return await container.perform { context in
+            let prompt = Array(
+                context.tokenizer.encode(
+                    text: String(repeating: "You clean up raw voice dictation into polished written text. ", count: 6),
+                    addSpecialTokens: false).prefix(300))
+            let base = context.model.newCache(parameters: nil)
+            let ids = { (toks: [Int]) in MLXArray(toks.map(Int32.init)).reshaped([1, toks.count]) }
+            eval(context.model(ids(prompt), cache: base))
+            eval(base.flatMap { $0.innerState() })
+            var rows: [(Int, Double)] = []
+            for t in tokenCounts {
+                let slice = Array(prompt.prefix(t))
+                var times: [Double] = []
+                var builds: [Double] = []
+                for _ in 0 ..< 7 {
+                    let cache = base.map { $0.copy() }
+                    eval(cache.flatMap { $0.innerState() })
+                    let t0 = CFAbsoluteTimeGetCurrent()
+                    let logits = context.model(ids(slice), cache: cache)
+                    let preds = argMax(logits[0], axis: -1)
+                    let t1 = CFAbsoluteTimeGetCurrent()
+                    _ = preds.asArray(Int32.self)
+                    times.append((CFAbsoluteTimeGetCurrent() - t0) * 1000)
+                    builds.append((t1 - t0) * 1000)
+                }
+                NSLog("PASS-COST T=%d build(cpu, lazy)=%.1fms total=%.1fms", t, builds.sorted()[3], times.sorted()[3])
+                rows.append((t, times.sorted()[3]))
+            }
+            return rows
+        }
     }
 
     /// One-shot "what might the STT model write for ⟨term⟩?" generation for
