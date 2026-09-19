@@ -278,7 +278,15 @@ actor SDKCleanupBackend: CleanupBackend {
         // The SDK reports prefix reuse by its absence: a generation that could
         // not use the prepared prefix warns. Same key the in-app engine writes,
         // so a history row reads the same either way.
-        notes.append(("cleanup_cached", lastWarnings.contains("prefix-cache-not-used") ? 0 : 1))
+        //
+        // Only when a generation was actually observed. A fallback result
+        // carries neither stage timings nor warnings even though the model did
+        // run (a guard rejection costs a full generation), so an empty warning
+        // list there means "unknown", not "cached" — writing 1 would have put
+        // a fabricated cache hit in the history row.
+        if t.prefillMS != nil || t.inferenceMS != nil {
+            notes.append(("cleanup_cached", lastWarnings.contains("prefix-cache-not-used") ? 0 : 1))
+        }
         if let tokenization = t.tokenizationMS { notes.append(("sdk_tokenization_ms", tokenization)) }
         notes.append(("sdk_queue_ms", t.queueMS))
         notes.append(("sdk_validation_ms", t.validationMS))

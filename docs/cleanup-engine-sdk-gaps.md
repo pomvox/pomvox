@@ -26,8 +26,21 @@ than what it set out to, that is said rather than papered over.*
 **The short version:** the SDK reproduces the engine it was extracted from, on
 real dictation, byte for byte. What stops the app moving onto it is not fidelity
 — it is that a single dictionary word costs 3.4× on every request, that memory
-pressure costs a 3.5 s full re-validation, and that there is no way to install a
-pack from an app.
+pressure costs a 3.5 s full re-validation, that there is no way to install a
+pack from an app, and that a rejection reports neither its reason nor its cost.
+
+Ranked by what would change a user's experience soonest:
+
+| # | Gap | Evidence |
+| --- | --- | --- |
+| 2 | Vocabulary misses the prefix cache | +650 ms on **every** real dictation, 2-word dictionary |
+| 4b | A rejection says only "rejected" | 2,122 ms spent, zero diagnostics, 11 guards collapsed into 1 case |
+| 4c | Spoken lists never survive; cue set too narrow | "shopping cart" rejected, "shopping list" would pass |
+| 3 | No eviction/resume — reopen re-validates 2 GB | 3,378–3,617 ms per cycle |
+| 1 | No installation API | ~200 lines reimplemented, second 2 GB copy on disk |
+| 4 | Cancel/timeout quarantine | next utterance pastes raw for 1,323 ms |
+| 4d | First dictation pays the full open | 3,312 ms of a 4,654 ms first request |
+| 7 | No decoder statistics | `spec_accept_rate` absent from every SDK history row |
 
 ---
 
@@ -71,6 +84,33 @@ Worth saying first, because it is the larger part of the result:
   transcript through both engines confirmed it: 25/25 identical, the two engines
   agreeing on it exactly.** **measured** (no transcript text left the machine;
   the corpus is not in the repository)
+
+---
+
+## On-device evidence (2026-09-19)
+
+The app ran on the SDK backend on a real Mac, with a real microphone, a real
+two-word dictionary (`pomvox`, `abhi`) and real dictation. Seven utterances:
+**six cleaned, one guard-rejected.** Everything below is from that session's
+`history.db` rows and `log show` output, not from a harness.
+
+    engine   status    cleanup   prefill   decode   cached
+    SDK      ok          4654*      1185      286        0     * includes 3312 ms cold open
+    SDK      ok          1775       1352      360        0
+    SDK      ok          1639       1349      230        0
+    SDK      ok          1856       1357      417        0
+    SDK      rejected    2122          —        —        —
+    SDK      ok          2987       1569     1346        0
+    in-app   ok          1157        704      431        1     same machine, same dictionary
+    in-app   ok          1689        726      941        1
+
+Read the last two rows against the rest. The in-app engine reuses its prefix
+(`cached 1`) and prefills in ~700 ms; the SDK reuses nothing (`cached 0`) and
+prefills in ~1,350 ms — **every single dictation, on a dictionary of two
+words.** That is gap 2, no longer a lab result.
+
+The user's own words after the session were "formatting was not there, it was a
+little slow." Both are explained below, and neither is subjective.
 
 ---
 
@@ -196,6 +236,87 @@ from "broken".
 *Suggested fix:* document the expected window; and consider letting a host opt
 into a second cleaner instance (the process-wide lease currently forbids it) so a
 quarantined worker does not take the feature down with it.
+
+### 4b. A rejection tells the host nothing — not why, not what it cost
+
+**Severity: high for anyone improving the model or the corpus.**
+
+The single rejected dictation of the on-device session spent **2,122 ms** and
+produced: `.fallback(.rejected)`. That is the whole diagnostic. The result
+carries no stage timings (the generation that ran is invisible), no warning, and
+above all **no indication of which guard fired**.
+
+`CleanupLogic.acceptOutput` has eleven distinct rejection paths — empty output,
+think tags, role prefix, upper length bound, lower length ratio, question
+preservation, short-raw word overlap, echo-with-commentary, markdown header,
+list-not-invited, list-invents-content. All eleven collapse into one enum case.
+
+For a host that is trying to *improve* the cleanup — which is the whole point of
+owning a fine-tune and a corpus — this is the difference between "the list guard
+refuses 'shopping cart'" and "something went wrong sometimes". I could not tell
+you with certainty which guard rejected that utterance without re-running it and
+capturing the model's candidate, and the host has no way to capture it at all.
+
+*Suggested fix:* carry the reason —
+`.fallback(.rejected(guard: .listNotInvited))` or a `rejectedBy: String` in
+`warnings` — and keep the stage timings on a fallback result. A rejection is the
+most expensive outcome there is (full generation, nothing to show); it should be
+the best instrumented, not the worst.
+
+*Related host-side bug this exposed:* because a fallback carries neither timings
+nor warnings, this integration's `timingNotes()` inferred "prefix cache used"
+from an empty warning list and wrote a fabricated `cleanup_cached: 1` into the
+history row. Fixed here by only reporting the flag when a generation was
+actually observed — but the SDK made the wrong answer the easy one.
+
+### 4c. Spoken-list formatting never survives, and the cue list is too narrow
+
+**Severity: medium — the user noticed this unprompted, as "formatting was not
+there".**
+
+Two consecutive dictations in the session, both shopping lists:
+
+- *"Here's the shopping cart: bananas, um, two mangoes, uh, and oranges."*
+  → accepted, but as one inline sentence: fillers gone, no list.
+- *"Here's the shopping cart, we'll get oranges, bananas, mangoes."*
+  → **rejected**, raw pasted.
+
+The cause is `rawInvitesList`: a list is only accepted when the speaker used a
+cue word — `list / listing / bullet(s) / bullet point(s) / points / steps /
+items / to-do(s)` — or counted at least two enumeration markers. **"cart" is not
+a cue.** Verified directly: the same sentence with "shopping list" instead of
+"shopping cart" passes the cue test; with "cart" it fails.
+
+So a user who says "shopping cart", "grocery run", "things to pick up", "here's
+what I need" gets either an inline sentence or, when the model does format a
+list, the raw transcript — the worst of both.
+
+This guard is inherited verbatim from the app, so it is not an SDK regression —
+but it now lives in `CleanupCore` and ships to every SDK consumer, which makes
+it the SDK's problem to own.
+
+*Suggested fix:* widen the cue set with the obvious shopping/task phrasings, and
+— more durably — treat a model that formats a list as evidence the speaker
+invited one, gated on `listPreservesContent` (which already proves the items are
+the speaker's own words). The current design asks a regex to out-guess a
+fine-tune that was trained on exactly this.
+
+### 4d. The first dictation after arming pays the whole open
+
+**Severity: medium.**
+
+The first utterance of the session cost **4,654 ms**, of which **3,312 ms** was
+`Cleaner.open` — hash-validating 2 GB, loading weights, prefilling, warming up —
+because the dictation arrived before the host's 20-second preload timer fired.
+The in-app engine's equivalent cold load is ~2,600 ms and, crucially, it can be
+re-entered cheaply afterwards (gap 3).
+
+The host can paper over this with an eager preload, and does. But a 3.3 s open
+that must complete before *any* request is served is a hard floor on
+"time from launch to useful", and the re-validation is the largest part of it.
+
+*Suggested fix:* the same as gap 3 — let a process that has already validated a
+pack reopen it without re-hashing every byte.
 
 ### 5. Output is capped at 1,024 tokens although 16,384 bytes are admitted
 
