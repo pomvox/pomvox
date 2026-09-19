@@ -12,6 +12,13 @@ SDK's test suite, which passes.
 Environment for every measurement: Apple M1, 16 GiB, macOS 15.7.4, Xcode 26.3,
 Swift 6.2.3, Debug builds, SimpleWords v3 pack `b1f7ac82…`, no network.
 
+Machine load matters on a 16 GB Mac running a 2 GB model, and it bit twice in
+this campaign — a cold-launch benchmark failed at 21.1 s immediately after a
+200-request soak and passed at 12.0 s once things settled (12.3 s on `main` for
+comparison), and one parity row diverged during a throttled stretch and agreed
+on rerun. Both are recorded here rather than quietly re-run, because they are
+the reason each number below says which run it came from.
+
 *Entries marked **measured** have numbers behind them; entries marked **by
 inspection** are read from the source. Where a probe measured something other
 than what it set out to, that is said rather than papered over.*
