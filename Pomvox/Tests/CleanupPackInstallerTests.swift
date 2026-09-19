@@ -229,29 +229,29 @@ final class CleanupPackInstallerTests: XCTestCase {
 
     /// The app bundles a verbatim copy of the SDK's manifest. If the two drift,
     /// the installed pack's `pack.json` no longer matches the artifact set the
-    /// SDK's runtime pins and `Cleaner.open` fails at arm — so the copy is
-    /// pinned here by hash against the submodule's file.
-    func testBundledManifestMatchesTheSubmoduleAndThePinnedSnapshot() throws {
-        let repo = URL(fileURLWithPath: #filePath)   // …/Pomvox/Tests/<this file>
-            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-        let vendored = repo.appendingPathComponent(
-            "vendor/pomvox-cleanup-engine/packs/simplewords-v3/pack.json")
-        let bundledURL = repo.appendingPathComponent("Pomvox/Resources/simplewords-v3.pack.json")
-        try XCTSkipUnless(FileManager.default.fileExists(atPath: vendored.path),
-                          "submodule not checked out: git submodule update --init")
-
-        XCTAssertEqual(try Data(contentsOf: bundledURL), try Data(contentsOf: vendored),
-                       "Pomvox/Resources/simplewords-v3.pack.json must be a byte-for-byte copy")
-        let (_, manifest) = try CleanupPackManifest.load(contentsOf: bundledURL)
+    /// SDK's runtime pins and `Cleaner.open` fails at arm.
+    ///
+    /// Pinned by hash rather than by reading the submodule at runtime: the
+    /// working copy lives on iCloud Drive, where reading an evicted file blocks
+    /// indefinitely instead of failing, which hung this suite. The constant is
+    /// the SHA-256 of `vendor/pomvox-cleanup-engine/packs/simplewords-v3/pack.json`
+    /// at submodule commit 00bd4d8, so drift on either side fails here.
+    func testBundledManifestMatchesThePinnedSDKManifest() throws {
+        let (data, manifest) = try CleanupPackManifest.bundled()
+        XCTAssertEqual(
+            SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined(),
+            "b18de5147868b8f24b706eeee065236926471ea3156aa69670ec43fa5f15059e",
+            "Pomvox/Resources/simplewords-v3.pack.json must stay a byte-for-byte copy "
+                + "of the SDK's packs/simplewords-v3/pack.json")
         XCTAssertEqual(manifest.modelID, SDKCleanupBackend.supportedModelID)
+        XCTAssertEqual(manifest.modelRevision, "b1f7ac8282ce060e4ad1374cb9a34750e31723c1")
         XCTAssertEqual(manifest.artifacts.count, 7)
-        XCTAssertEqual(manifest.modelRevision.count, 40)
         XCTAssertTrue(manifest.artifacts.contains { $0.path == "system_v2.txt" },
                       "the frozen prompt is part of the pinned artifact set")
+        XCTAssertEqual(manifest.artifacts.first { $0.path == "model.safetensors" }?.bytes, 2_000_043_615)
     }
 }
 
-/// Minimal mutable box for capturing a flag out of a `@Sendable` closure.
 private final class Unchecked<Value>: @unchecked Sendable {
     var value: Value
     init(_ value: Value) { self.value = value }

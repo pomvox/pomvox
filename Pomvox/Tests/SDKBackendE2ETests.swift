@@ -178,7 +178,8 @@ final class SDKBackendE2ETests: XCTestCase {
         let outcome = await backend.prepare(modelID: SDKCleanupBackend.supportedModelID, onProgress: nil)
         let reopenMs = (CFAbsoluteTimeGetCurrent() - t0) * 1000
         guard case .loaded = outcome else { return XCTFail("reopen failed: \(outcome)") }
-        XCTAssertGreaterThan(await backend.generation, generation)
+        let reopened = await backend.generation
+        XCTAssertGreaterThan(reopened, generation)
         print(String(format: "SDK-reopen ms=%.0f", reopenMs))
         let (_, second) = await runCleanup(backend, text: "um hello there", style: "polish", timeoutS: 30)
         XCTAssertEqual(second, .ok)
