@@ -383,6 +383,15 @@ func runCleanup(
     let out: String?
     do {
         out = try await engine.clean(text, style: style, timeoutS: timeoutS)
+    } catch CleanupBackendFailure.rejected {
+        // A backend whose own guards refused the candidate reports the app's
+        // `.rejected`, not `.error`: the model answered, the guards said no.
+        // (The in-app engine returns the candidate and this function's own
+        // `acceptOutput` below decides; the SDK guards internally and can only
+        // tell us after the fact.) Same status either way, so a history row
+        // means the same thing whichever backend produced it.
+        NSLog("cleanup: backend rejected its own output")
+        return (text, .rejected)
     } catch {
         NSLog("cleanup: engine failed: %@", String(describing: error))
         return (text, .error)

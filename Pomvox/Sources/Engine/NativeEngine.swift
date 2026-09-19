@@ -72,11 +72,27 @@ final class NativeEngine: ObservableObject {
     private let pidfile = Pidfile()
     private let capture = AudioCapture()
     private let transcriber = Transcriber()
-    private let cleanup = CleanupEngine()
+    /// The in-app cleanup engine that shipped through v0.2.8. Still the
+    /// backend when `[cleanup] backend = "inapp"`, and — whichever backend is
+    /// configured — still what answers the dictionary page's variant
+    /// suggestions, which the SDK has no equivalent for.
+    private let inAppCleanup = CleanupEngine()
+    /// The configured backend (see `CleanupBackendKind`). Reassigned only from
+    /// `loadEngineConfig()`, which runs before the tap installs and before any
+    /// load is scheduled — the same snapshot-at-arm rule as `machine`.
+    private var cleanup: any CleanupBackend
+    /// Which implementation `cleanup` currently is, for logs and Settings.
+    private(set) var cleanupBackendKind = CleanupBackendKind.defaultKind
 
     /// UI access for the rule editor's variant suggestions — read-only use of
-    /// the actor; `cleanup` is a `let`, so this is safe off the main actor.
-    nonisolated var variantSuggester: CleanupEngine { cleanup }
+    /// the actor; `inAppCleanup` is a `let`, so this is safe off the main actor.
+    ///
+    /// Deliberately the in-app engine even under the SDK backend: variant
+    /// suggestion is a second, differently-prompted generation, and the SDK's
+    /// frozen-prompt cleaner exposes no such call. Under the SDK backend this
+    /// loads the model a second time, so `DictionaryView` only reaches for it
+    /// when the user actually asks for suggestions.
+    nonisolated var variantSuggester: CleanupEngine { inAppCleanup }
     private var tap: EventTap?
     private let configPath: String
 
@@ -174,6 +190,10 @@ final class NativeEngine: ObservableObject {
     init(configPath: String = SettingsModel.defaultPath()) {
         self.configPath = configPath
         self.machine = try! HotkeyMachine()  // fixed Fn push-to-talk bindings
+        // Placeholder until loadEngineConfig() reads [cleanup] backend at arm.
+        // The in-app engine is the safe stand-in: nothing calls it before then,
+        // and if config reading ever failed the app would still clean.
+        self.cleanup = inAppCleanup
         let hud = HudController()
         self.hud = hud
         self.bus = HudBus(render: { payloads in
@@ -460,11 +480,11 @@ final class NativeEngine: ObservableObject {
             await MainActor.run {
                 self?.polishLoad = ModelLoad.line(.polish, fraction: nil, downloading: false)
             }
-            let outcome = await cleanup.prepare(modelID: modelID) { [weak self] fraction in
+            let outcome = await cleanup.prepare(modelID: modelID, onProgress: { [weak self] fraction in
                 let line = ModelLoad.line(.polish, fraction: fraction, downloading: true)
                 guard polishGate.changed(line) else { return }
                 Task { @MainActor in self?.polishLoad = line }
-            }
+            })
             await MainActor.run {
                 guard let self else { return }
                 // If this load's Task was cancelled (disarm/teardown) or the
@@ -741,6 +761,24 @@ final class NativeEngine: ObservableObject {
         cleanupIdleEvictS = doc.double("cleanup", "idle_evict_s")
             ?? CleanupResidency.defaultIdleEvictS(isLowMemory: lowMem)
         cleanupSpeculative = doc.bool("cleanup", "speculative") ?? true
+        // Which cleanup implementation runs this session. Snapshotted here,
+        // like every other [cleanup] key, so a mid-session config edit cannot
+        // swap the backend out from under an in-flight dictation; the key is
+        // restart-required in Settings for the same reason.
+        let kind = CleanupBackendKind.parse(doc.string("cleanup", "backend"))
+        cleanupBackendKind = kind
+        switch kind {
+        case .inapp:
+            cleanup = inAppCleanup
+        case .sdk:
+            let packDir = SDKCleanupBackend.defaultPackDirectory(
+                configured: doc.string("cleanup", "pack_dir"))
+            // One backend instance per arm: the SDK takes a process-wide
+            // resident-model lease, so a second live instance could not open
+            // anyway, and a fresh one guarantees no state survives a re-arm.
+            cleanup = SDKCleanupBackend(packDirectory: packDir)
+        }
+        NSLog("pomvox-engine: cleanup backend = %@", kind.rawValue)
 
         historyEnabled = doc.bool("history", "enabled") ?? true
         historyRetentionDays = doc.int("history", "retention_days") ?? 7
@@ -1001,8 +1039,8 @@ final class NativeEngine: ObservableObject {
                 // WHERE cleanup time went, not just how much. A timeout while
                 // waiting for a reload never reached the model — its stats
                 // would be the previous dictation's, so skip them.
-                if status != .timeout, let stats = await self.cleanup.lastGenStats {
-                    for (key, value) in stats.timingNotes() { timings.note(key, value) }
+                if status != .timeout {
+                    for (key, value) in await self.cleanup.timingNotes() { timings.note(key, value) }
                 }
             }
             // What the cleanup model produced (or fell back to), before the

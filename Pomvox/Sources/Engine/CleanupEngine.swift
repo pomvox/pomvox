@@ -877,7 +877,10 @@ actor CleanupEngine: CleanupCleaning {
     /// directory. `downloadSnapshot` short-circuits on a complete cached
     /// snapshot and falls back to the cache when the remote listing fails, so
     /// this is no more network-dependent than the stock loader.
-    private static func fetchFrozenSnapshot(
+    /// Internal (not private) since the SDK backend's pack installer acquires
+    /// the same snapshot through the same globs — one download path, one
+    /// stray-weight check, whichever backend is configured.
+    static func fetchFrozenSnapshot(
         modelID: String, onProgress: (@Sendable (Double) -> Void)?
     ) async throws -> URL {
         guard let repo = Repo.ID(rawValue: modelID) else {

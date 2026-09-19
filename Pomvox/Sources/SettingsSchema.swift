@@ -42,7 +42,8 @@ enum SettingsSchema {
     static let restartRequiredKeys: Set<String> = [
         "hotkey.ptt", "hotkey.toggle", "hotkey.stop", "hotkey.cancel",
         "stt.model", "cleanup.model", "cleanup.enabled", "cleanup.style",
-        "cleanup.timeout_s", "audio.device", "log.file",
+        "cleanup.timeout_s", "cleanup.backend", "cleanup.pack_dir",
+        "audio.device", "log.file",
     ]
 
     static func isRestartRequired(_ section: String, _ key: String) -> Bool {
