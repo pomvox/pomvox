@@ -12,9 +12,15 @@ SDK's test suite, which passes.
 Environment for every measurement: Apple M1, 16 GiB, macOS 15.7.4, Xcode 26.3,
 Swift 6.2.3, Debug builds, SimpleWords v3 pack `b1f7ac82…`, no network.
 
-*Status: measurements land here as the campaign runs. Entries marked **measured**
-have numbers behind them; entries marked **by inspection** are read from the
-source and still need their probe run.*
+*Entries marked **measured** have numbers behind them; entries marked **by
+inspection** are read from the source. Where a probe measured something other
+than what it set out to, that is said rather than papered over.*
+
+**The short version:** the SDK reproduces the engine it was extracted from, on
+real dictation, byte for byte. What stops the app moving onto it is not fidelity
+— it is that a single dictionary word costs 3.4× on every request, that memory
+pressure costs a 3.5 s full re-validation, and that there is no way to install a
+pack from an app.
 
 ---
 
@@ -33,6 +39,31 @@ Worth saying first, because it is the larger part of the result:
   (`diff` ignoring `public`).
 - **The SDK's own suite reproduces.** 99 tests × Debug/Release/TSan/ASan, 9
   installer tests, 20 lifecycle repeats, all green on this machine. **measured**
+- **Its real-model differential reproduces too**, network-denied: 15 model tests,
+  zero skips, all 24 fixtures byte-identical across library / greedy / cached
+  speculative / uncached speculative, 184 accepted draft tokens per speculative
+  mode. Medians 713 / 818 / 525 / 1471 ms — slightly faster than the SDK's own
+  recorded run (762 / 889 / 554 / 1555 ms). **measured**
+- **It cleans correctly inside the app.** The app's own 24-case behaviour corpus
+  run through the SDK backend: 23 accepted, 1 refused by the guards, no
+  regressions against the expectations the in-app engine is held to — and the
+  one case marked a known v3 gap (chained triple self-correction) now passes.
+  **measured** (`SDKBackendE2ETests.testCorpusThroughTheSDKBackend`)
+- **A dictation racing the open still gets cleaned**, because the adapter
+  re-implements the in-app engine's wait-and-credit. Worth stating because the
+  SDK alone would have pasted raw. **measured**
+- **It reproduces the engine it was extracted from, on real dictation.** 424
+  transcripts — the app's 24 behaviour cases plus 400 taken from a real
+  `history.db` — through both engines in one process, one after the other:
+  **423 byte-identical**. The single difference is not a fidelity divergence:
+  on the fourth-longest transcript (2,053 characters) the *in-app* engine hit
+  its 60 s deadline and pasted raw while the SDK completed the cleanup. The
+  surrounding log shows the machine degraded at that moment (decode 9.1 tok/s
+  and prefill 32 tok/s, against 20–40 and ~200 in the same run), so this reads
+  as machine state rather than an engine difference. **Re-running that exact
+  transcript through both engines confirmed it: 25/25 identical, the two engines
+  agreeing on it exactly.** **measured** (no transcript text left the machine;
+  the corpus is not in the repository)
 
 ---
 
@@ -62,7 +93,7 @@ both are already "caller-trusted and immutable").
 
 ### 2. The vocabulary is rendered outside the cached prefix
 
-**Severity: high if confirmed — it is the common case, not an edge case.**
+**Severity: high — confirmed, and it is the common case, not an edge case.**
 
 The prefix cache is built at `open` from the frozen prompt alone
 (`MLXRuntime.buildPrefix`), but the dictionary hint is inserted *between* the
@@ -81,7 +112,21 @@ The SDK's own differential only asserts that a vocabulary request does not
 terms, five requests each, reporting `prefix-cache-not-used` warnings and median
 latency.
 
-*Result:* **pending**
+*Result:* **confirmed, and it is total.** One term is enough to lose the cache:
+
+    terms   prefix reused   median
+        0         5 of 5     778 ms
+        1         0 of 5   2,667 ms     3.4× slower
+       10         0 of 5   2,606 ms
+       64         0 of 5   4,031 ms     5.2× slower
+
+Not a partial or occasional miss — **every** request with a nonempty vocabulary
+ran uncached and warned `prefix-cache-not-used`. The SDK's own differential
+prices the same effect independently: its 24 fixtures run at a 525 ms median
+cached and 1,471 ms uncached.
+
+Anyone who has ever added a word to their dictionary pays this on every
+dictation, which in Pomvox is most users.
 
 *Suggested fix:* accept the vocabulary at `open` (it is constant for a cleaner's
 life in every host that has one) and prefill it into the prefix; or expose
@@ -104,7 +149,16 @@ dictation a full reopen.
 *Repro:* `SDKProbeTests.testCloseReopenCycleCost` (five cycles),
 `SDKBenchTests.testPostEvictionReloadLatency`.
 
-*Result:* **pending**
+*Result:* **3,411 / 3,378 / 3,617 / 3,539 / 3,384 ms** over five close→open
+cycles — steady, and every one of them re-hashes 2 GB, reloads the weights,
+re-prefills the prefix and re-runs a warmup. The in-app engine's equivalent is a
+weight read, because it keeps its prefix caches across an eviction.
+
+A close immediately followed by an open does succeed, but only because this
+integration waits for the previous cleaner to release the SDK's process-wide
+device lease before opening (`SDKCleanupBackend.closing`). Without that wait the
+reopen races the lease — which is exactly what a memory-pressure eviction
+followed by the next dictation looks like.
 
 *Suggested fix:* `Cleaner.evict()` / `Cleaner.resume()` that keep the validated
 pack identity and the prefix tokens, so a resume is a weight load; or let `open`
@@ -125,7 +179,12 @@ made because they cancelled — is the one that loses its cleanup.
 `…AfterDeadline` — cancel/expire a long request, then poll every 100 ms until a
 short request succeeds.
 
-*Result:* **pending**
+*Result:* **measured, and narrower than feared.** The cleaner became usable again
+**1,323 ms** after a cancellation and **699 ms** after a deadline expiry. So it
+is bounded by the abandoned generation's remaining work, not indefinite — but a
+user who cancels and immediately re-dictates still loses that dictation's
+cleanup, and nothing in the API lets a host distinguish "briefly quarantined"
+from "broken".
 
 *Suggested fix:* document the expected window; and consider letting a host opt
 into a second cleaner instance (the process-wide lease currently forbids it) so a
@@ -133,7 +192,8 @@ quarantined worker does not take the feature down with it.
 
 ### 5. Output is capped at 1,024 tokens although 16,384 bytes are admitted
 
-**Severity: medium — silent on short dictations, total on long ones.**
+**Severity: medium — by inspection; the probe that was meant to confirm it
+measured something else (below).**
 
 `CleanupRequest.validate()` accepts 16,384 UTF-8 bytes. `MLXRuntime.generate`
 caps generation at `max(64, min(2 × inputTokens, 1024))`. Any transcript whose
@@ -145,7 +205,17 @@ Pomvox's own history has transcripts up to 9,335 characters.
 
 *Repro:* `SDKProbeTests.testLongInputsFindTheTokenCapCliff` — 500 … 8,000 chars.
 
-*Result:* **pending**
+*Result:* **not reached — the guards refuse first.** At 541 / 1,052 / 2,001 /
+4,045 / 8,060 characters of synthetic repeated speech, every result came back
+`rejected`, after 1.8 / 2.5 / 3.5 / 5.3 / 9.7 seconds of work. The raw
+transcript survived intact each time, which is the contract that matters, but
+the probe was built on repetitive text the output guards were always going to
+refuse, so it does not establish where the token cap actually bites. The cap is
+still there in the source; finding its edge needs a long *non*-repetitive
+fixture. Re-run before filing this one.
+
+What the run does show is the cost of failing: nearly ten seconds spent on an
+8,000-character transcript that could only ever paste raw.
 
 *Suggested fix:* either raise the cap with the input, or reject over-long
 requests at `validate()` so the host can skip straight to its fallback instead of
@@ -248,10 +318,18 @@ or drop the lease to one-model-per-*cleaner* rather than per process.
 
 | Measurement | in-app | SDK | Source |
 | --- | --- | --- | --- |
-| Byte parity on the E2E corpus | — | pending | `SDKBackendE2ETests` |
-| Byte parity on 400 real transcripts | — | pending | `SDKBackendE2ETests` + private corpus |
-| Warm p50 / p95 | pending | pending | `CleanupBenchTests` / `SDKBenchTests` |
-| Cold prepare | pending | pending | same |
-| Post-eviction reload | pending | pending | same |
-| Dictionary on/off delta | pending | pending | `SDKBenchTests` |
-| 200-request soak | — | pending | `SDKProbeTests` |
+| Byte parity, 24 behaviour cases + 400 real transcripts | reference | **423/424 identical**; the 424th agreed on rerun | `SDKBackendE2ETests` + private corpus |
+| Warm median / p95, 15 requests | pending | 688 ms / 1,896 ms | `CleanupBenchTests` / `SDKBenchTests` |
+| Cold prepare | pending | ~3.0–5.2 s | `SDKBackendE2ETests`, `SDKProbeTests` |
+| Close→open cycle | keeps prefix | 3,378–3,617 ms | `SDKProbeTests` |
+| Dictionary: 0 vs 1 term | prefix rebuilt at load | 778 → 2,667 ms | `SDKProbeTests` |
+| Dictionary delta, independent run | — | 614 → 2,059 ms (cached 5/5 → 0/5) | `SDKBenchTests` |
+| Post-eviction reload + first request | — | 3,171 ms + 463 ms | `SDKBenchTests` |
+| Quarantine after cancel / deadline | n/a | 1,323 ms / 699 ms | `SDKProbeTests` |
+| 200-request soak | — | p50 723 ms, p95 1,868 ms, 192/200 cleaned, RSS 3,214 → 3,086 MB | `SDKProbeTests` |
+| 4 concurrent requests | — | 3 cleaned, 1 refused (busy) | `SDKProbeTests` |
+| Pack refusals (stray file / corrupt byte / incomplete) | — | all three correctly refused | `SDKProbeTests` |
+
+The soak is the reassuring one: two hundred warm requests with no leak (resident
+size ended *below* where it started) and no degradation. The eight refusals are
+the guards doing their job on deliberately hard fixtures, not failures.

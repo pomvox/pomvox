@@ -39,6 +39,12 @@ actor SDKCleanupBackend: CleanupBackend {
     private let packDirectory: URL
     private let installer: CleanupPackInstalling
     private var cleaner: PomvoxCleanup.Cleaner?
+    /// An in-flight `close()`. The SDK's MLX runtime holds a process-wide
+    /// device lease that is released only once the closed cleaner is actually
+    /// torn down, so an eviction immediately followed by a reload — exactly
+    /// what memory pressure produces — can otherwise fail to open with
+    /// "MLX device already has an open cleaner". `prepare()` waits on this.
+    private var closing: Task<Void, Never>?
     private var loadGeneration = 0
     private var preparing = false
     private var loadedModelID: String?
@@ -78,6 +84,8 @@ actor SDKCleanupBackend: CleanupBackend {
         preparing = true
         defer { preparing = false }
         let t0 = CFAbsoluteTimeGetCurrent()
+        // Let any previous cleaner finish releasing the device first.
+        if let closing { await closing.value; self.closing = nil }
         do {
             try await installer.ensureInstalled(packDirectory: packDirectory,
                                                 modelID: modelID, onProgress: onProgress)
@@ -109,9 +117,11 @@ actor SDKCleanupBackend: CleanupBackend {
         guard let cleaner else { return }
         self.cleaner = nil
         // close() stops admission immediately but releases the model only once
-        // any in-flight worker returns, so this is fire-and-forget: the actor
-        // must not block a memory-pressure eviction on a GPU pass.
-        Task { await cleaner.close() }
+        // any in-flight worker returns, so this does not block: a
+        // memory-pressure eviction must not wait on a GPU pass. The task is
+        // retained so the next prepare() can wait for the device instead of
+        // racing it.
+        closing = Task { await cleaner.close() }
         NSLog("cleanup: SDK cleaner closed (no prefix retained — reopen re-validates the pack)")
     }
 
@@ -176,6 +186,11 @@ actor SDKCleanupBackend: CleanupBackend {
         } catch is CancellationError {
             throw CancellationError()
         } catch {
+            // No result means no stage timings for this pass. Leaving the
+            // previous dictation's numbers in place would write them into this
+            // one's history row.
+            lastTimings = nil
+            lastWarnings = []
             throw CleanupBackendFailure.other(String(describing: error))
         }
         lastTimings = result.timings
