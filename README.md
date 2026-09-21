@@ -203,7 +203,10 @@ It **never** sends audio, transcripts, cleaned text, file paths, or any free
 text — there is no field in the payload that could carry them. Anonymous,
 content-free, and open source: you can read exactly what leaves in
 [`Telemetry.swift`](Pomvox/Sources/Telemetry.swift). The Python reference engine
-makes no network calls at all.
+has no telemetry and no updater; loading its speech or cleanup model still
+talks to Hugging Face if the weights are not already cached.
+
+The full privacy policy is in [PRIVACY.md](PRIVACY.md).
 
 One more opt-in, also off by default: **Settings → Privacy → Save transcription
 pairs for evaluation** writes each dictation's raw transcript and cleaned text
@@ -277,5 +280,7 @@ repo to follow the series.
 
 ---
 
-Built by [Abhi Ram Salammagari](https://www.abhiramsalammagari.com). Licensed
-under the [MIT License](LICENSE).
+Built by [Abhi Ram Salammagari](https://www.abhiramsalammagari.com). The code is
+licensed under the [MIT License](LICENSE). Bundled and downloaded models and
+libraries keep their own licenses; see
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

@@ -23,6 +23,7 @@ These packages are resolved and linked into `Pomvox.app`.
 | swift-huggingface-mlx | 0.2.0 | Apache-2.0 | https://github.com/DePasqualeOrg/swift-huggingface-mlx |
 | swift-tokenizers-mlx | 0.3.0 | Apache-2.0 | https://github.com/DePasqualeOrg/swift-tokenizers-mlx |
 | swift-tokenizers | 0.5.0 | Apache-2.0 | https://github.com/DePasqualeOrg/swift-tokenizers |
+| Sparkle | 2.9.4+ | MIT | https://github.com/sparkle-project/Sparkle |
 
 ### Transitive dependencies
 
