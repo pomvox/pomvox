@@ -28,8 +28,12 @@ iCloud-synced working copy. SwiftPM runs `git status` over every checkout during
 resolution; against `.spm/` on the iCloud Desktop that hangs indefinitely rather
 than failing, so a build appears to stall forever at "Resolve Package Graph".
 
-CI on this branch cannot resolve the package while the SDK repository is
-private — expected, and the reason the branch is not proposed for merge as-is.
+CI needs `submodules: recursive` on its checkout, which this branch adds to the
+two jobs that build the app. Without it `xcodegen` rejects the spec outright —
+`Invalid local package "PomvoxCleanupMLX"` — because the submodule directory is
+empty, which is a clearer failure than the package-resolution error you might
+expect. This only works now that `pomvox-cleanup-engine` is public; against a
+private submodule the checkout itself fails, and CI would need a deploy key.
 
 ## Choosing a backend
 
