@@ -47,9 +47,19 @@ enum EmptyTranscriptCause: Equatable {
     }
 }
 
-func classifyEmptyTranscript(rawWasEmpty: Bool, peakDbfs: Double, sttError: String?,
+/// `true` when the string has no words. Whitespace-only STT output (`" "`,
+/// `"\n"`) is blank: `isEmpty` is false for it, and treating it as speech
+/// pastes a blank and, once a later stage collapses it, blames a dictionary wipe.
+func isBlankTranscript(_ text: String) -> Bool {
+    text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+}
+
+/// `raw` is the STT string before dictionary replacement. A non-blank raw that
+/// later became empty is a dictionary wipe; whitespace-only raw is not words,
+/// so it falls through to the silent / no-speech / STT-error cases.
+func classifyEmptyTranscript(raw: String, peakDbfs: Double, sttError: String?,
                              silenceFloorDbfs: Double = -70.0) -> EmptyTranscriptCause {
-    if !rawWasEmpty { return .dictionaryWiped }
+    if !isBlankTranscript(raw) { return .dictionaryWiped }
     if let sttError { return .sttFailed(sttError) }
     if peakDbfs < silenceFloorDbfs { return .silentAudio(peakDbfs) }
     return .noSpeech(peakDbfs)

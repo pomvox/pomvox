@@ -984,10 +984,12 @@ final class NativeEngine: ObservableObject {
             NSLog("pomvox-engine: transcript = %@", raw.isEmpty ? "<empty>" : raw)
             var text = raw
             var cleanupStatus: CleanupStatus?
-            // Cleanup OFF: nothing below runs — the <300 ms raw path is intact.
-            // The draft loop is already stopped (`finishing`), so the GPU pass
-            // never overlaps STT on the ANE.
-            if doCleanup, !raw.isEmpty {
+            // Cleanup OFF, or a whitespace-only transcript: nothing below runs.
+            // The <300 ms raw path stays intact, and blank STT output is not
+            // speech to polish — the model invents words from it. The draft
+            // loop is already stopped (`finishing`), so the GPU pass never
+            // overlaps STT on the ANE.
+            if doCleanup, !isBlankTranscript(raw) {
                 self.bus.post(.state("polishing", coldMark))
                 let (cleaned, status) = await cleanupWithWatchdog(
                     self.cleanup, raw: raw, style: style, timeoutS: timeoutS)
@@ -1025,10 +1027,10 @@ final class NativeEngine: ObservableObject {
             // what was pasted the first time (`apply` is idempotent).
             text = sig.apply(to: text)
             let (appHint, pastedAt): (String?, Double?) = await MainActor.run {
-                guard !text.isEmpty else {
+                guard !isBlankTranscript(text) else {
                     let peak = peakDbfs(samples)
                     let cause = classifyEmptyTranscript(
-                        rawWasEmpty: raw.isEmpty, peakDbfs: peak, sttError: sttError)
+                        raw: raw, peakDbfs: peak, sttError: sttError)
                     NSLog("pomvox-engine: empty transcript — %@ (raw %d chars)",
                           String(describing: cause), raw.count)
                     if let msg = cause.hudMessage {
