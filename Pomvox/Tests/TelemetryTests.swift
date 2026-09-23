@@ -447,9 +447,27 @@ final class TelemetryTests: XCTestCase {
     private func makeClient(enabled: Bool, endpoint: URL?, spy: SenderSpy,
                             persist: PersistSpy, queue: TelemetryQueue = TelemetryQueue())
         -> TelemetryClient {
-        TelemetryClient(endpoint: endpoint, enabled: { enabled }, env: env,
+        makeClient(enabled: { enabled }, endpoint: endpoint, spy: spy,
+                   persist: persist, queue: queue)
+    }
+
+    private func makeClient(enabled: @escaping @Sendable () -> Bool, endpoint: URL?, spy: SenderSpy,
+                            persist: PersistSpy, queue: TelemetryQueue = TelemetryQueue())
+        -> TelemetryClient {
+        TelemetryClient(endpoint: endpoint, enabled: enabled, env: env,
                         now: { 1_730_000_000_000 }, sender: spy.send,
                         queue: queue, persist: persist.save)
+    }
+
+    /// Mutable stand-in for the consent gate, so a test can opt in mid-flight.
+    private final class EnabledBox: @unchecked Sendable {
+        private let lock = NSLock()
+        private var stored: Bool
+        init(_ value: Bool) { stored = value }
+        var value: Bool {
+            get { lock.lock(); defer { lock.unlock() }; return stored }
+            set { lock.lock(); stored = newValue; lock.unlock() }
+        }
     }
 
     func testRecordPersistsThePendingQueue() async {
@@ -525,5 +543,52 @@ final class TelemetryTests: XCTestCase {
         try? await Task.sleep(nanoseconds: 100_000_000)
         XCTAssertTrue(persist.snapshots.isEmpty, "no consent → nothing on disk")
         XCTAssertTrue(spy.bodies.isEmpty)
+    }
+
+    func testAppLaunchSkippedBeforeConsentIsSentOnceOnGrant() async {
+        // arm() emits app_launch while the first-run sheet is still undecided.
+        // The event must not hit disk then, and must be recorded exactly once
+        // when the user opts in — not replayed on a second grant.
+        let gate = EnabledBox(false)
+        let spy = SenderSpy(), persist = PersistSpy()
+        let client = makeClient(enabled: { gate.value }, endpoint: URL(string: "https://x")!,
+                                spy: spy, persist: persist)
+        await client.ingestNow(.error, props: .error("stt_failed"))
+        await client.ingestNow(.appLaunch)
+        XCTAssertTrue(persist.snapshots.isEmpty, "nothing is buffered before consent")
+
+        await client.releaseSkippedAppLaunch()
+        XCTAssertTrue(persist.snapshots.isEmpty, "still undecided → the flag stays set")
+
+        gate.value = true
+        await client.releaseSkippedAppLaunch()
+        XCTAssertEqual(persist.latest.map(\.event), [.appLaunch],
+                       "the skipped launch is the only event recovered")
+        XCTAssertEqual(persist.latest[0].props, TelemetryProps())
+
+        await client.releaseSkippedAppLaunch()
+        XCTAssertEqual(persist.latest.map(\.event), [.appLaunch], "one launch, not a second")
+    }
+
+    func testGrantWithNoSkippedLaunchSendsNothing() async {
+        let spy = SenderSpy(), persist = PersistSpy()
+        let client = makeClient(enabled: true, endpoint: URL(string: "https://x")!,
+                                spy: spy, persist: persist)
+        await client.releaseSkippedAppLaunch()
+        XCTAssertTrue(persist.snapshots.isEmpty)
+    }
+
+    func testLiveAppLaunchClearsTheSkippedFlag() async {
+        // Consent lands before the deferred release runs, and arm()'s own emit
+        // then succeeds. Releasing afterwards must not add a second launch.
+        let gate = EnabledBox(false)
+        let spy = SenderSpy(), persist = PersistSpy()
+        let client = makeClient(enabled: { gate.value }, endpoint: URL(string: "https://x")!,
+                                spy: spy, persist: persist)
+        await client.ingestNow(.appLaunch)
+        gate.value = true
+        await client.ingestNow(.appLaunch)
+        await client.releaseSkippedAppLaunch()
+        XCTAssertEqual(persist.latest.map(\.event), [.appLaunch])
     }
 }

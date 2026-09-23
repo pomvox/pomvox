@@ -389,6 +389,10 @@ actor TelemetryClient {
     private let sender: Sender
     private let persist: @Sendable ([TelemetryEvent]) -> Void
     private var flushTask: Task<Void, Never>?
+    /// `app_launch` arrived before consent. A flag only — the event itself is
+    /// not queued or written to disk, so an undecided or denied session still
+    /// holds nothing that could leak. Granting consent emits one fresh launch.
+    private var skippedAppLaunch = false
 
     /// `persist` is called with the full pending queue after every change, so a
     /// quit cannot lose what the ~2 s debounce hasn't flushed yet. It defaults to
@@ -441,18 +445,42 @@ actor TelemetryClient {
         persist(queue.events)
     }
 
-    /// Fire-and-forget entry from any context. Never blocks the caller; the
-    /// gate makes it a true no-op when consent isn't granted or no endpoint is set.
+    /// Fire-and-forget entry from any context. Never blocks the caller. The
+    /// gate drops the event when consent isn't granted or no endpoint is set.
+    /// `app_launch` is remembered as a flag in that case and emitted later if
+    /// the user opts in (`releaseSkippedAppLaunch`).
     nonisolated func emit(_ name: TelemetryEventName, props: TelemetryProps = TelemetryProps()) {
         Task { await self.ingest(name: name, props: props) }
     }
 
     private func ingest(name: TelemetryEventName, props: TelemetryProps) {
-        // Don't even buffer unless consent is granted — so an `.undecided` or
-        // `.denied` session never accumulates events that could leak on a later
-        // "Share". (flush() re-checks too, as defense in depth.)
-        guard isEnabled() else { return }
+        // Don't buffer the event unless consent is granted — so an `.undecided`
+        // or `.denied` session never accumulates payloads that could leak on a
+        // later "Share". (flush() re-checks too, as defense in depth.)
+        // arm() emits `app_launch` before a new user has answered the consent
+        // sheet. Remember that it happened (a flag, not the event) so
+        // `releaseSkippedAppLaunch` can emit a fresh one after they opt in.
+        guard isEnabled() else {
+            if name == .appLaunch { skippedAppLaunch = true }
+            return
+        }
+        if name == .appLaunch { skippedAppLaunch = false }
         record(TelemetryEvent(event: name, ts: now(), props: props))
+        scheduleFlush()
+    }
+
+    /// Awaitable `emit`, so tests can observe the gate without a sleep.
+    func ingestNow(_ name: TelemetryEventName, props: TelemetryProps = TelemetryProps()) {
+        ingest(name: name, props: props)
+    }
+
+    /// After consent flips to granted: if this process tried to record
+    /// `app_launch` while it could not send, record one now. A no-op when
+    /// nothing was skipped, or when consent is still off (the flag stays set).
+    func releaseSkippedAppLaunch() {
+        guard skippedAppLaunch, isEnabled() else { return }
+        skippedAppLaunch = false
+        record(TelemetryEvent(event: .appLaunch, ts: now(), props: TelemetryProps()))
         scheduleFlush()
     }
 
