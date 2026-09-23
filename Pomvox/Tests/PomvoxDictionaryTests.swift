@@ -133,6 +133,18 @@ final class PomvoxDictionaryTests: XCTestCase {
         XCTAssertEqual(d.applyReporting("hello world").fired, [])
     }
 
+    /// `fired` is unique and in first-fired order. Compile walks longest source
+    /// first, so "pom box" fires before "box" even though "box" appears first
+    /// in the text. The short source matches twice and still contributes one id.
+    func testApplyReportingDistinctRulesAreUniqueAndFirstFired() {
+        let longer = rule(["pom box"], "Pomvox")
+        let shorter = rule(["box"], "BOX")
+        let d = PomvoxDictionary(file: DictionaryFile(rules: [shorter, longer]))
+        let out = d.applyReporting("box then pom box then box")
+        XCTAssertEqual(out.text, "BOX then Pomvox then BOX")
+        XCTAssertEqual(out.fired, [longer.id, shorter.id])
+    }
+
     func testWordsFileInitFeedsHint() {
         let d = PomvoxDictionary(file: DictionaryFile(words: ["Pomvox"]))
         XCTAssertTrue(d.hint.contains("Pomvox"))
@@ -179,5 +191,27 @@ final class PomvoxDictionaryTests: XCTestCase {
     func testWholeTranscriptWipeWithTrailingWhitespace() {
         let d = PomvoxDictionary(file: DictionaryFile(rules: [rule(["um"], "")]))
         XCTAssertEqual(d.apply("um um um. "), "")
+    }
+
+    /// tidyAfterWipe runs on the whole string once any wipe has fired, including
+    /// stretches a non-wipe rule just wrote. A normal replacement survives.
+    func testWipeAndNonWipeTidyTheWholeOutput() {
+        let d = PomvoxDictionary(file: DictionaryFile(rules: [
+            rule(["um"], ""),
+            rule(["mur mur"], "Pomvox"),
+        ]))
+        XCTAssertEqual(d.apply("I um love mur mur."), "I love Pomvox.")
+    }
+
+    /// A non-wipe target with no word characters is still subject to the
+    /// all-punctuation collapse, but only when the wipe removed every word.
+    /// Beside a surviving word it stays, with the space before it absorbed.
+    func testPunctuationOnlyNonWipeBesideAWipe() {
+        let d = PomvoxDictionary(file: DictionaryFile(rules: [
+            rule(["um"], ""),
+            rule(["star"], "..."),
+        ]))
+        XCTAssertEqual(d.apply("see um star"), "see...")
+        XCTAssertEqual(d.apply("um star"), "")
     }
 }

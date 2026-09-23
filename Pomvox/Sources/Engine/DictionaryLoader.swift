@@ -3,15 +3,19 @@ import Foundation
 /// Canonical locations, with env overrides mirroring `POMVOX_CONFIG_PATH`
 /// (see `SettingsModel.defaultPath()`) so tests and rigs can redirect them.
 enum DictionaryPaths {
-    static func dictionaryPath() -> String {
-        if let o = ProcessInfo.processInfo.environment["POMVOX_DICTIONARY_PATH"], !o.isEmpty {
+    static func dictionaryPath(
+        environment: [String: String] = ProcessInfo.processInfo.environment
+    ) -> String {
+        if let o = environment["POMVOX_DICTIONARY_PATH"], !o.isEmpty {
             return o
         }
         return NSString(string: "~/.pomvox/dictionary.toml").expandingTildeInPath
     }
 
-    static func statsPath() -> String {
-        if let o = ProcessInfo.processInfo.environment["POMVOX_DICTIONARY_STATS_PATH"], !o.isEmpty {
+    static func statsPath(
+        environment: [String: String] = ProcessInfo.processInfo.environment
+    ) -> String {
+        if let o = environment["POMVOX_DICTIONARY_STATS_PATH"], !o.isEmpty {
             return o
         }
         return NSString(string: "~/.pomvox/dictionary-stats.json").expandingTildeInPath
