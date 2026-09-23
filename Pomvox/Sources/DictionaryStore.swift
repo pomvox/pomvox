@@ -77,10 +77,24 @@ final class DictionaryStore: ObservableObject {
     // MARK: - Words
 
     func addWord(_ word: String) {
+        addWords([word])
+    }
+
+    /// Append every new word, then save and notify once. A 500-word import
+    /// used to call `addWord` per row — one rewrite of dictionary.toml, one
+    /// `dictionary_edited` event, and one engine hot-reload each. Blanks and
+    /// duplicates (including repeats inside `words`) are skipped; a batch
+    /// that adds nothing does not write.
+    func addWords(_ words: [String]) {
         guard parseError == nil else { return }
-        let w = word.trimmingCharacters(in: .whitespaces)
-        guard !w.isEmpty, !file.words.contains(w) else { return }
-        file.words.append(w)
+        var changed = false
+        for word in words {
+            let w = word.trimmingCharacters(in: .whitespaces)
+            guard !w.isEmpty, !file.words.contains(w) else { continue }
+            file.words.append(w)
+            changed = true
+        }
+        guard changed else { return }
         save(wordsChanged: true)
     }
 
@@ -98,28 +112,46 @@ final class DictionaryStore: ObservableObject {
     /// new one). Sources are trimmed/deduped; a rule with no sources is a
     /// delete.
     func upsert(_ rule: DictionaryRule, replacingID: String?) {
-        guard parseError == nil else { return }
+        guard applyUpsert(rule, replacingID: replacingID) else { return }
+        save()
+    }
+
+    /// Insert each rule (deduped by content id), then save and notify once.
+    /// Same no-op rules as `upsert`: empty sources and an id already present
+    /// do not write. `replacingID` is an editor concern; import always inserts.
+    func upsertAll(_ rules: [DictionaryRule]) {
+        var changed = false
+        for rule in rules {
+            if applyUpsert(rule, replacingID: nil) { changed = true }
+        }
+        guard changed else { return }
+        save()
+    }
+
+    /// Mutate `file` the way `upsert` does. Returns whether anything changed.
+    /// Does not save — callers save once so a batch is one disk write.
+    private func applyUpsert(_ rule: DictionaryRule, replacingID: String?) -> Bool {
+        guard parseError == nil else { return false }
         var r = rule
         var seen = Set<String>()
         r.sources = r.sources
             .map { $0.trimmingCharacters(in: .whitespaces) }
             .filter { !$0.isEmpty && seen.insert($0.lowercased()).inserted }
         r.target = r.target.trimmingCharacters(in: .whitespaces)
-        var changed = false
         if let old = replacingID, let i = file.rules.firstIndex(where: { $0.id == old }) {
             if r.sources.isEmpty {
                 file.rules.remove(at: i)
-                changed = true
+                return true
             } else if file.rules[i] != r {
                 file.rules[i] = r
-                changed = true
+                return true
             }
+            return false
         } else if !r.sources.isEmpty, !file.rules.contains(where: { $0.id == r.id }) {
             file.rules.append(r)
-            changed = true
+            return true
         }
-        guard changed else { return }
-        save()
+        return false
     }
 
     func removeRule(id: String) {

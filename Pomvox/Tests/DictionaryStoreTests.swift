@@ -108,6 +108,64 @@ final class DictionaryStoreTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: dictPath))
     }
 
+    func testAddWordsSavesOnceAndDedupes() throws {
+        let store = DictionaryStore(path: dictPath, configPath: cfgPath)
+        var saves = 0
+        let token = NotificationCenter.default.addObserver(
+            forName: .pomvoxDictionaryDidChange, object: store, queue: nil
+        ) { _ in saves += 1 }
+        defer { NotificationCenter.default.removeObserver(token) }
+        store.addWords([" MLX ", "Kubernetes", "MLX", "", "  "])
+        XCTAssertEqual(saves, 1)
+        XCTAssertEqual(store.file.words, ["MLX", "Kubernetes"])
+        let onDisk = try DictionaryDocument.parse(String(contentsOfFile: dictPath, encoding: .utf8))
+        XCTAssertEqual(onDisk.words, ["MLX", "Kubernetes"])
+    }
+
+    func testAddWordsNoOpDoesNotSave() {
+        let store = DictionaryStore(path: dictPath, configPath: cfgPath)
+        store.addWord("MLX")
+        var saves = 0
+        let token = NotificationCenter.default.addObserver(
+            forName: .pomvoxDictionaryDidChange, object: store, queue: nil
+        ) { _ in saves += 1 }
+        defer { NotificationCenter.default.removeObserver(token) }
+        store.addWords(["MLX", "", "  MLX "])
+        XCTAssertEqual(saves, 0)
+        XCTAssertEqual(store.file.words, ["MLX"])
+    }
+
+    func testUpsertAllSavesOnceAndSkipsDuplicateIds() throws {
+        let store = DictionaryStore(path: dictPath, configPath: cfgPath)
+        let first = DictionaryRule(sources: ["pom box"], target: "Pomvox",
+                                    enabled: true, origin: "manual")
+        let second = DictionaryRule(sources: ["um"], target: "",
+                                     enabled: true, origin: "manual")
+        var saves = 0
+        let token = NotificationCenter.default.addObserver(
+            forName: .pomvoxDictionaryDidChange, object: store, queue: nil
+        ) { _ in saves += 1 }
+        defer { NotificationCenter.default.removeObserver(token) }
+        store.upsertAll([first, second, first])
+        XCTAssertEqual(saves, 1)
+        XCTAssertEqual(store.file.rules, [first, second])
+        let onDisk = try DictionaryDocument.parse(String(contentsOfFile: dictPath, encoding: .utf8))
+        XCTAssertEqual(onDisk.rules, [first, second])
+    }
+
+    func testBatchMutatorsDoNotClobberAMalformedFile() throws {
+        try "words = [broken".write(toFile: dictPath, atomically: true, encoding: .utf8)
+        let store = DictionaryStore(path: dictPath, configPath: cfgPath)
+        XCTAssertNotNil(store.parseError)
+        store.addWords(["X", "Y"])
+        store.upsertAll([
+            DictionaryRule(sources: ["a b"], target: "AB", enabled: true, origin: "manual"),
+        ])
+        let raw = try String(contentsOfFile: dictPath, encoding: .utf8)
+        XCTAssertEqual(raw, "words = [broken")
+        XCTAssertEqual(store.file, DictionaryFile())
+    }
+
     func testSecondStoreInstanceSeesExternalSave() {
         let a = DictionaryStore(path: dictPath, configPath: cfgPath)
         let b = DictionaryStore(path: dictPath, configPath: cfgPath)
