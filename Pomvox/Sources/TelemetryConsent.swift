@@ -36,6 +36,9 @@ final class TelemetryModel: ObservableObject {
         // consent also drops whatever is still queued, on disk included — events
         // buffered while granted must not outlive the choice that allowed them.
         if decision == .granted {
+            // arm() emits app_launch before this choice exists. Replay that one
+            // launch now; it was never queued, only remembered as a flag.
+            Task { await TelemetryClient.shared.releaseSkippedAppLaunch() }
             TelemetryClient.shared.emit(.settingChanged)
         } else {
             Task { await TelemetryClient.shared.forget() }
