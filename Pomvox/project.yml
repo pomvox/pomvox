@@ -73,7 +73,7 @@ settings:
     # the three TCC grants once — the code identity changed from "Murmur Dev".
     Release:
       CODE_SIGN_IDENTITY: "Developer ID Application"
-      DEVELOPMENT_TEAM: "CT84AT52RS"
+      DEVELOPMENT_TEAM: "896P23686K"
       ENABLE_HARDENED_RUNTIME: YES
       # Notarization requires a secure timestamp (a plain `xcodebuild build`
       # signs with --timestamp=none) and forbids the get-task-allow debug
@@ -132,7 +132,7 @@ targets:
         # org settings change would remove, silently ending updates for everyone
         # running that build. Both paths serve byte-identical appcasts today.
         SUFeedURL: https://raw.githubusercontent.com/pomvox/pomvox/main/appcast.xml
-        SUPublicEDKey: EY7D5pzhZlKZgoC0ySSy8j1UmrzQ3NSz1zI9UfStWfI=
+        SUPublicEDKey: 1eKBmA4f8T9VLvJZr1Oxq6BEPtze7xXCd6JMYvGE8LY=
         SUEnableAutomaticChecks: true
         SUAutomaticallyUpdate: false
         SUScheduledCheckInterval: 86400
