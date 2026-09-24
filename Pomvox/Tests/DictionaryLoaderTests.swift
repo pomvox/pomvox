@@ -65,6 +65,24 @@ final class DictionaryLoaderTests: XCTestCase {
         XCTAssertEqual(r.file, DictionaryFile())   // empty, never a crash
     }
 
+    func testPathsHonorEnvOverridesAndIgnoreEmptyOnes() {
+        XCTAssertEqual(
+            DictionaryPaths.dictionaryPath(environment: ["POMVOX_DICTIONARY_PATH": "/tmp/dict.toml"]),
+            "/tmp/dict.toml")
+        XCTAssertEqual(
+            DictionaryPaths.statsPath(environment: ["POMVOX_DICTIONARY_STATS_PATH": "/tmp/stats.json"]),
+            "/tmp/stats.json")
+        // An empty override must fall through. Rigs set the variable only when
+        // they mean it; a blank value is not a path.
+        let blank = ["POMVOX_DICTIONARY_PATH": "", "POMVOX_DICTIONARY_STATS_PATH": ""]
+        XCTAssertEqual(
+            DictionaryPaths.dictionaryPath(environment: blank),
+            NSString(string: "~/.pomvox/dictionary.toml").expandingTildeInPath)
+        XCTAssertEqual(
+            DictionaryPaths.statsPath(environment: blank),
+            NSString(string: "~/.pomvox/dictionary-stats.json").expandingTildeInPath)
+    }
+
     func testBothMissingIsEmpty() {
         let r = DictionaryLoader.load(configPath: dir.appendingPathComponent("a.toml").path,
                                       dictionaryPath: dir.appendingPathComponent("b.toml").path)
