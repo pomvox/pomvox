@@ -140,9 +140,8 @@ struct DictionaryView: View {
             guard resp == .OK, let url = panel.url,
                   let text = try? String(contentsOf: url, encoding: .utf8) else { return }
             switch kind {
-            case .words: DictionaryInterchange.parseWordList(text).forEach(store.addWord)
-            case .rules: DictionaryInterchange.parseRulesCSV(text)
-                .forEach { store.upsert($0, replacingID: nil) }
+            case .words: store.addWords(DictionaryInterchange.parseWordList(text))
+            case .rules: store.upsertAll(DictionaryInterchange.parseRulesCSV(text))
             }
         }
     }
