@@ -113,7 +113,14 @@ final class SettingsStoreTests: XCTestCase {
 
     /// Settings must display the model the engine will actually run when
     /// `[cleanup] model` is absent, or the panel lies about the active model.
+    /// On an 8 GB Mac that is the compact model; the struct default stays the
+    /// standard id so an empty-file read without a memory override is stable.
     func testTheDisplayedDefaultMatchesTheEngineDefault() {
+        let bytes = ProcessInfo.processInfo.physicalMemory
+        let engineDefault = MemoryTier.firstRunCleanupModel(physicalMemoryBytes: bytes)
+        let displayed = SettingsIO.read(
+            ConfigDocument(text: ""), cleanupModelDefault: engineDefault)
+        XCTAssertEqual(displayed.cleanupModel, engineDefault)
         XCTAssertEqual(SettingsValues.defaults.cleanupModel, MemoryTier.standardCleanupModel)
     }
 }

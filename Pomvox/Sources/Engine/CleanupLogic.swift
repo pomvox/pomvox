@@ -16,6 +16,11 @@ struct ChatMessage: Equatable {
 
 enum CleanupStatus: String {
     case ok, timeout, rejected, error
+    /// Cleanup was requested and did not run because the model was missing,
+    /// still downloading, or had failed to load. The raw transcript is pasted
+    /// and the UI says why. Distinct from `.timeout`, which is a resident
+    /// model that didn't finish inside the deadline.
+    case unavailable
 }
 
 /// What `runCleanup` needs from a cleanup engine; `nil` means deadline /
@@ -377,6 +382,8 @@ enum CleanupLogic {
 
 /// Clean `text` via `engine`; fall back to the raw text on any failure.
 /// Returns `(finalText, status)` with status one of ok|timeout|rejected|error.
+/// `unavailable` is reported by the engine when it never calls this because
+/// the model isn't ready — `nil` from `clean` stays `.timeout`.
 func runCleanup(
     _ engine: any CleanupCleaning, text: String, style: String, timeoutS: Double
 ) async -> (String, CleanupStatus) {

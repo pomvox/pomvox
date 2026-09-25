@@ -348,8 +348,9 @@ actor CleanupEngine: CleanupCleaning {
             self.profile = profile
             loadGeneration &+= 1
         } catch {
-            NSLog("cleanup: model load FAILED: %@", String(describing: error))
-            return .failed(String(describing: error))
+            let message = CleanupAvailability.failureMessage(error)
+            NSLog("cleanup: model load FAILED: %@ — %@", message, String(describing: error))
+            return .failed(message)
         }
 
         // Warmup: prefill the static prompt prefix per prefix key (doubles as
@@ -873,6 +874,43 @@ actor CleanupEngine: CleanupCleaning {
         return nil
     }
 
+    /// Files the stock `ModelConfiguration(id:)` loader fetches. Kept in sync
+    /// with that set so a legacy preset downloaded here is what `prepare()`
+    /// later loads, and nothing else.
+    static let legacySnapshotGlobs = ["*.safetensors", "*.json", "*.jinja"]
+
+    /// Download the snapshot and return. Does not load weights and does not
+    /// set `preparing` — a dictation's cleanup deadline must be able to give
+    /// up without this still looking like an in-flight load, and without
+    /// sharing that deadline's task.
+    ///
+    /// Stale Hugging Face lock files are removed first when nothing holds
+    /// them. A lock a live download still holds is left alone; callers must
+    /// not start a second download for the same repo while one is in flight
+    /// (`FileLock` waits forever).
+    func downloadWeights(
+        modelID: String, onProgress: (@Sendable (Double) -> Void)? = nil
+    ) async throws {
+        let reclaimed = HuggingFaceStaleLock.reclaimUnheldLocks(forRepo: modelID)
+        if reclaimed > 0 {
+            NSLog("cleanup: removed %d stale lock file(s) for %@", reclaimed, modelID)
+        }
+        NSLog("cleanup: downloading %@", modelID)
+        do {
+            switch CleanupPromptProfile.forModel(modelID) {
+            case .simpleWords:
+                _ = try await Self.fetchFrozenSnapshot(modelID: modelID, onProgress: onProgress)
+            case .legacy:
+                _ = try await Self.fetchLegacySnapshot(modelID: modelID, onProgress: onProgress)
+            }
+            NSLog("cleanup: download finished %@", modelID)
+        } catch {
+            NSLog("cleanup: model download FAILED: %@ — %@",
+                  CleanupAvailability.failureMessage(error), String(describing: error))
+            throw error
+        }
+    }
+
     /// Download exactly the files the frozen path needs and return the snapshot
     /// directory. `downloadSnapshot` short-circuits on a complete cached
     /// snapshot and falls back to the cache when the remote listing fails, so
@@ -885,6 +923,20 @@ actor CleanupEngine: CleanupCleaning {
         }
         return try await HubClient.default.downloadSnapshot(
             of: repo, matching: frozenSnapshotGlobs,
+            progressHandler: { progress in onProgress?(progress.fractionCompleted) })
+    }
+
+    /// Same cache write as the frozen path, with the globs the stock loader
+    /// uses for a Qwen preset. `downloadSnapshot` is a no-op when the snapshot
+    /// is already complete.
+    private static func fetchLegacySnapshot(
+        modelID: String, onProgress: (@Sendable (Double) -> Void)?
+    ) async throws -> URL {
+        guard let repo = Repo.ID(rawValue: modelID) else {
+            throw FrozenPromptError.badRepoID(modelID)
+        }
+        return try await HubClient.default.downloadSnapshot(
+            of: repo, matching: legacySnapshotGlobs,
             progressHandler: { progress in onProgress?(progress.fractionCompleted) })
     }
 

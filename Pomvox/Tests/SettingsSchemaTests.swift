@@ -10,28 +10,26 @@ final class SettingsSchemaTests: XCTestCase {
     // MARK: restart-required parity with config.py
 
     func testRestartRequiredKeysMatchConfigPy() {
-        // restart_required(): hotkey.*, stt.model, cleanup.model, audio.device, log.*
+        // restart_required(): hotkey.*, stt.model, audio.device, log.*
+        // cleanup.model stays restart-required in config.py (the Python
+        // process loads it once at startup). The native engine hot-applies
+        // it — a save starts the download — so it is not in this set.
         XCTAssertTrue(SettingsSchema.isRestartRequired("hotkey", "ptt"))
         XCTAssertTrue(SettingsSchema.isRestartRequired("hotkey", "cancel"))
         XCTAssertTrue(SettingsSchema.isRestartRequired("stt", "model"))
-        XCTAssertTrue(SettingsSchema.isRestartRequired("cleanup", "model"))
+        XCTAssertFalse(SettingsSchema.isRestartRequired("cleanup", "model"))
         XCTAssertTrue(SettingsSchema.isRestartRequired("audio", "device"))
     }
 
-    /// `NativeEngine.cleanupEnabled`, `.cleanupStyle`, and `.cleanupTimeoutS`
-    /// are each assigned in exactly one place — `loadEngineConfig()`
-    /// (NativeEngine.swift) — which itself runs from exactly one place,
-    /// `arm()`. The per-dictation path only ever reads the cached property,
-    /// so toggling any of these three in Settings while already armed does
-    /// nothing until the next arm: the running engine keeps using whatever
-    /// was true 27 minutes ago. Until someone makes these hot-apply (i.e.
-    /// makes the per-dictation path re-read config.toml instead of a cached
-    /// field), they must warn "needs a restart" — remove an entry here only
-    /// after doing that work for the corresponding field.
-    func testCleanupRuntimeSnapshotKeysRequireRestart() {
-        XCTAssertTrue(SettingsSchema.isRestartRequired("cleanup", "enabled"))
-        XCTAssertTrue(SettingsSchema.isRestartRequired("cleanup", "style"))
-        XCTAssertTrue(SettingsSchema.isRestartRequired("cleanup", "timeout_s"))
+    /// Cleanup enabled / style / timeout / model are re-read on save
+    /// (`NativeEngine.applyCleanupSettingsFromDisk`), not snapshotted until
+    /// the next arm. They must not ask for a restart: that restart cancelled
+    /// the model download.
+    func testCleanupRuntimeKeysHotApply() {
+        XCTAssertFalse(SettingsSchema.isRestartRequired("cleanup", "enabled"))
+        XCTAssertFalse(SettingsSchema.isRestartRequired("cleanup", "style"))
+        XCTAssertFalse(SettingsSchema.isRestartRequired("cleanup", "timeout_s"))
+        XCTAssertFalse(SettingsSchema.isRestartRequired("cleanup", "model"))
     }
 
     func testHotAppliableKeysAreNotRestartRequired() {

@@ -137,7 +137,7 @@ enum TelemetrySanitizer {
     static func durationMs(_ ms: Int) -> Int { max(0, min(ms, 86_400_000)) }
 
     static func cleanupStatus(_ s: String) -> String? {
-        ["ok", "timeout", "rejected", "error", "off"].contains(s) ? s : nil
+        ["ok", "timeout", "rejected", "error", "unavailable", "off"].contains(s) ? s : nil
     }
 
     static func errorCode(_ s: String) -> String? {
