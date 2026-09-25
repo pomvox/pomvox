@@ -126,6 +126,9 @@ private struct GeneralPane: View {
                     SettingToggle(isOn: $model.values.cleanupEnabled, label: "Clean up transcripts")
                 }
                 RowDivider()
+                InfoRow(symbol: CleanupAvailability.statusSymbol(engine.cleanupAvailability),
+                        text: CleanupAvailability.runtimeSummary(engine.cleanupAvailability))
+                RowDivider()
                 SettingRow(title: "Style") {
                     SegmentControl(options: [("light", "Light"), ("polish", "Polish")],
                                    selection: $model.values.cleanupStyle,
@@ -373,6 +376,7 @@ extension Bundle {
 
 private struct ModelsPane: View {
     @EnvironmentObject var model: SettingsModel
+    @EnvironmentObject var engine: NativeEngine
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             SettingsGroup("Speech-to-text") {
@@ -383,12 +387,19 @@ private struct ModelsPane: View {
             }
             PaneNote("The native engine runs Parakeet v2 (English, the default) or v3 (multilingual) on the Neural Engine; any other id falls back to v2.")
             SettingsGroup("Cleanup model") {
-                SettingRow(title: "Model", restart: true) {
+                SettingRow(title: "Model") {
                     ModelField(presets: SettingsSchema.cleanupModelPresets,
                                value: $model.values.cleanupModel, error: model.errors["cleanup.model"])
                 }
+                RowDivider()
+                SettingRow(title: "Status",
+                           desc: CleanupAvailability.modelStatusLine(engine.cleanupPhase)) {
+                    if let title = CleanupAvailability.buttonTitle(engine.cleanupPhase) {
+                        Button(title) { engine.downloadOrRetryCleanupModel() }
+                    }
+                }
             }
-            PaneNote("Any Hugging Face MLX model id works for cleanup — the dropdown is just suggestions. Models download on first use and stay local.")
+            PaneNote("Any Hugging Face MLX model id works for cleanup — the dropdown is just suggestions. Download stays on this Mac. A dictation that times out, or turning the engine off, does not cancel it.")
         }
     }
 }

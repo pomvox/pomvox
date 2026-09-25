@@ -23,26 +23,20 @@ enum SettingsSchema {
 
     // MARK: - Restart-required (superset of config.py `restart_required`)
 
-    /// Keys the running Swift engine can't hot-apply: models and the
-    /// hotkey/event tap (built once at startup), the input device
-    /// (InputStream built at startup), and log routing. Everything else
-    /// hot-applies within ~1 s — except the `[cleanup]` runtime trio below.
+    /// Keys the running Swift engine can't hot-apply: the speech model and
+    /// the hotkey/event tap (built once at startup), the input device
+    /// (InputStream built at startup), and log routing.
     ///
-    /// This set is a superset of config.py's `restart_required`
-    /// (src/pomvox/config.py:187-211), not parity with it, and that's
-    /// intentional: `cleanup.enabled`/`.style`/`.timeout_s` are snapshotted
-    /// once by `NativeEngine.loadEngineConfig()`, which runs only from
-    /// `arm()` — a live toggle can't take effect until the next arm. The
-    /// Python engine doesn't have this problem: `_reload_config`
-    /// (src/pomvox/app.py:234) swaps the whole `Config` object, so it
-    /// genuinely hot-applies these keys. The two engines legitimately
-    /// diverge here; don't "fix" config.py to match. Issue #103 tracks
-    /// making the native engine hot-apply them too — when that lands,
-    /// remove these three entries (and the test that pins them).
+    /// `[cleanup]` enabled, style, timeout, and model are NOT in this set.
+    /// The native engine re-reads them on save (`applyCleanupSettingsFromDisk`)
+    /// and starts or swaps the cleanup download without an engine restart —
+    /// a restart used to cancel that download. config.py's `restart_required`
+    /// still lists `cleanup.model` for the Python process, which loads models
+    /// once at startup; that divergence is intentional. Don't add the cleanup
+    /// keys back here unless the native engine stops hot-applying them.
     static let restartRequiredKeys: Set<String> = [
         "hotkey.ptt", "hotkey.toggle", "hotkey.stop", "hotkey.cancel",
-        "stt.model", "cleanup.model", "cleanup.enabled", "cleanup.style",
-        "cleanup.timeout_s", "audio.device", "log.file",
+        "stt.model", "audio.device", "log.file",
     ]
 
     static func isRestartRequired(_ section: String, _ key: String) -> Bool {

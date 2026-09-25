@@ -96,7 +96,7 @@ final class TelemetryTests: XCTestCase {
     }
 
     func testCleanupStatusAllowlist() {
-        for s in ["ok", "timeout", "rejected", "error", "off"] {
+        for s in ["ok", "timeout", "rejected", "error", "unavailable", "off"] {
             XCTAssertEqual(TelemetrySanitizer.cleanupStatus(s), s)
         }
         XCTAssertNil(TelemetrySanitizer.cleanupStatus("weird"))

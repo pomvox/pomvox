@@ -48,10 +48,20 @@ final class NativeEngine: ObservableObject {
 
     // First-run model-download progress (see ModelLoadStatus). `speechLoad` is
     // non-nil while the speech model loads and stands in for the engine status
-    // (it gates dictation); `polishLoad` tracks the background cleanup-model
-    // fetch after the engine is already usable. Both clear to nil when loaded.
+    // (it gates dictation). Cleanup has its own phase (`cleanupAvailability`):
+    // the download is not cleared when it fails, so the menu bar can say why
+    // cleanup isn't running.
     @Published private(set) var speechLoad: String?
-    @Published private(set) var polishLoad: String?
+    /// Choice (enabled) plus whether the model is actually downloaded, loading,
+    /// resident, or failed. The Settings toggle writes config; this is what
+    /// the running engine is doing with that choice.
+    @Published private(set) var cleanupAvailability = CleanupAvailabilityState.initial
+
+    /// Menu-bar note while cleanup is on but the model isn't resident.
+    var polishLoad: String? { CleanupAvailability.menuLine(cleanupAvailability) }
+
+    /// Phase of `cleanupAvailability`, for the dictation path.
+    var cleanupPhase: CleanupModelPhase { cleanupAvailability.phase }
 
     // Setup heartbeat: last time the PTT key's own event reached the tap.
     // Distinguishes "tap dead / key handled in keyboard hardware" (stays nil)
@@ -80,8 +90,10 @@ final class NativeEngine: ObservableObject {
     private var tap: EventTap?
     private let configPath: String
 
-    // [cleanup] snapshot, read at arm() like [hud]/[vad] (re-arm to apply).
-    // Defaults mirror SettingsStore/config.py.
+    // [cleanup] enabled / style / timeout / model hot-apply on save (and when
+    // the low-memory sheet writes a choice). They used to be snapshotted only
+    // in arm(), so the toggle could read ON while this process still had
+    // cleanup off — and the model download never started.
     private var cleanupEnabled = true
     private var cleanupStyle = "polish"
     private var cleanupTimeoutS = 5.0
@@ -94,7 +106,6 @@ final class NativeEngine: ObservableObject {
     // and is evicted after `idleEvictS` unused (reloads on next use). The hint
     // is snapshotted at arm and applied just before the deferred load so it
     // still rides inside the cached prompt prefix.
-    private var cleanupPreloadDelayS = CleanupResidency.defaultPreloadDelayS
     private var cleanupIdleEvictS = CleanupResidency.lowMemoryIdleEvictS
     /// Drops the resident cleanup model when macOS reports memory pressure —
     /// the safety net that lets a 16 GB+ Mac keep the model loaded between
@@ -106,8 +117,22 @@ final class NativeEngine: ObservableObject {
     private var cleanupHint = ""
     private var cleanupLastUsedAt: CFAbsoluteTime?
     private var cleanupLoadedAt: CFAbsoluteTime?
+    /// In-memory load (`prepare`). Cancelled on disarm — the bytes stay on
+    /// disk and the next arm loads them. This is NOT the download.
     private var cleanupLoadTask: Task<Void, Never>?
-    private var cleanupPreloadTask: Task<Void, Never>?
+    /// Snapshot download. Detached from the engine session and from the
+    /// per-utterance cleanup deadline: cancelling it mid-transfer leaves a
+    /// Hugging Face `.lock` with no blob, and the next attempt waits on that
+    /// lock forever. Disarm, quit-of-the-engine, and a 5 s timeout must not
+    /// cancel this task.
+    private var cleanupDownloadTask: Task<Void, Never>?
+    /// True once arm has reached `.ready`. Weight loads wait for it so an
+    /// 8 GB Mac isn't asked to resident the cleanup LLM while STT is still
+    /// coming up. Downloads (disk only) do not wait.
+    private var acceptingCleanupLoad = false
+    /// Onboarding warm is recorded when the load — not just the download —
+    /// succeeds. Remembered across the two steps.
+    private var markCleanupWarmedOnLoad = false
     private var cleanupResidencyTask: Task<Void, Never>?
     // Perceived-fast HUD (item 8): the first dictation after arm pays the cold
     // model spin-up, so the HUD shows a shimmer placeholder for it. True until
@@ -188,7 +213,14 @@ final class NativeEngine: ObservableObject {
         NotificationCenter.default.addObserver(
             forName: .pomvoxSettingsDidChange, object: nil, queue: .main
         ) { [weak self] _ in
-            MainActor.assumeIsolated { self?.reloadSignature() }
+            MainActor.assumeIsolated {
+                self?.reloadSignature()
+                // Cleanup enabled/style/timeout/model take effect on save,
+                // including the low-memory sheet, which posts the same notice
+                // after writing config.toml. A restart used to be required,
+                // and the toggle lied until one happened.
+                self?.applyCleanupSettingsFromDisk()
+            }
         }
     }
 
@@ -344,6 +376,7 @@ final class NativeEngine: ObservableObject {
         // lands there instead of on their first real dictation. STT already
         // warmed during prepare() above. After this first warm, later launches
         // use the lazy path.
+        acceptingCleanupLoad = true
         if cleanupEnabled {
             cleanupHint = dictionary.hint
             cleanupLastUsedAt = nil
@@ -351,17 +384,12 @@ final class NativeEngine: ObservableObject {
             let onboarding = OnboardingWarm()
             if onboarding.shouldWarmNow {
                 NSLog("pomvox-engine: first run — warming cleanup now (onboarding)")
-                // Fire-and-forget: ensureCleanupLoaded only spawns the background
-                // load Task and returns, so this eager warm does not block
-                // arm→ready — the cost is paid off the hot path during Setup.
-                // markWarmedOnSuccess persists the one-time flag only once that
-                // background load completes, so an interrupted/failed warm is
-                // retried next launch instead of dropping to a cold first
-                // dictation.
-                ensureCleanupLoaded(markWarmedOnSuccess: true)
-            } else {
-                scheduleCleanupPreload()
             }
+            // Fire-and-forget. The download starts now (disk only); weights
+            // load when it finishes. Neither waits on arm→ready, and neither
+            // is tied to a dictation's deadline. The onboarding flag is
+            // recorded only once the weights are actually resident.
+            syncCleanupModel(markWarmedOnSuccess: onboarding.shouldWarmNow)
             startCleanupResidencyWatchdog()
         }
 
@@ -417,36 +445,171 @@ final class NativeEngine: ObservableObject {
         Task.isCancelled || !isArmed
     }
 
-    /// `markWarmedOnSuccess` records the one-time onboarding warm once the model
-    /// is actually resident. It's passed per-call and captured as an immutable
-    /// local inside the load Task rather than kept in a shared flag, so there's
-    /// no cross-task mutable state to reason about: the fresh-install arm is the
-    /// sole trigger before the engine reports ready, so its Task owns the load
-    /// and persists the flag on completion; a failed/abandoned load never marks.
-    private func ensureCleanupLoaded(markWarmedOnSuccess: Bool = false) {
+    /// Bring the cleanup model in line with `cleanupAvailability`. Downloads
+    /// run even when the engine is still starting (disk only). Weight loads
+    /// wait until `acceptingCleanupLoad`.
+    private func syncCleanupModel(markWarmedOnSuccess: Bool = false) {
+        if markWarmedOnSuccess { markCleanupWarmedOnLoad = true }
+        guard cleanupEnabled else { return }
+        if cleanupDownloadTask != nil || cleanupLoadTask != nil { return }
+        switch CleanupAvailability.action(for: cleanupAvailability) {
+        case .none:
+            return
+        case .download:
+            startCleanupDownload(modelID: cleanupModelID)
+        case .load:
+            beginCleanupLoad(modelID: cleanupModelID)
+        }
+    }
+
+    /// Settings → Models "Download model" / "Retry download". Works whether or
+    /// not the toggle is on: the bytes land either way, and the weights load
+    /// only once cleanup is enabled and the engine is armed. A download
+    /// already in flight is left alone (a second one deadlocks on the file lock).
+    func downloadOrRetryCleanupModel() {
+        guard cleanupDownloadTask == nil, cleanupLoadTask == nil else { return }
+        switch cleanupAvailability.phase {
+        case .notDownloaded, .failed:
+            startCleanupDownload(modelID: cleanupModelID)
+        case .onDisk where cleanupEnabled && acceptingCleanupLoad:
+            beginCleanupLoad(modelID: cleanupModelID)
+        default:
+            break
+        }
+    }
+
+    /// Re-read `[cleanup]` and apply it now. Called on every settings save and
+    /// when the low-memory sheet writes a choice — not on the next arm.
+    private func applyCleanupSettingsFromDisk() {
+        let doc = ConfigDocument.load(path: configPath)
+        let previousModel = cleanupModelID
+        let wasEnabled = cleanupEnabled
+        loadCleanupSettings(from: doc)
+        var next = cleanupAvailability
+        next.enabled = cleanupEnabled
+        if cleanupModelID != previousModel, cleanupDownloadTask == nil {
+            // The snapshot we had resident (or were about to load) is for a
+            // different id. Drop it and fetch the new one. An in-flight
+            // download is for the previous id; its completion sees the
+            // mismatch and starts this one, so it is not cancelled.
+            Task { [cleanup] in await cleanup.unload() }
+            next.phase = .notDownloaded
+            next.downloadInFlight = false
+        }
+        if wasEnabled && !cleanupEnabled {
+            // The engine may stay armed. Don't clear acceptingCleanupLoad —
+            // that flag tracks arm/disarm, and clearing it here would refuse
+            // to load the model when the user turns cleanup back on.
+            cleanupLoadTask?.cancel()
+            cleanupLoadTask = nil
+            Task { [cleanup] in await cleanup.unload() }
+            if next.phase == .ready || next.phase == .loading { next.phase = .onDisk }
+        }
+        cleanupAvailability = next
+        if cleanupEnabled, isArmed, cleanupResidencyTask == nil {
+            startCleanupResidencyWatchdog()
+        }
+        syncCleanupModel()
+    }
+
+    /// `[cleanup]` enabled / style / timeout / model, including the low-memory
+    /// defaults for an absent key. Shared by arm() and by hot-apply.
+    private func loadCleanupSettings(from doc: ConfigDocument) {
+        let physicalMemory = ProcessInfo.processInfo.physicalMemory
+        let lowMem = MemoryTier.isLowMemory(physicalMemory)
+        let lowMemPrompted = UserDefaults.standard.bool(forKey: LowMemoryCleanupModel.promptedKey)
+        let cleanupKeyPresent = doc.bool("cleanup", "enabled") != nil
+        cleanupEnabled = doc.bool("cleanup", "enabled")
+            ?? MemoryTier.firstRunCleanupDefault(isLowMemory: lowMem, lowMemPrompted: lowMemPrompted)
+        if lowMem, !cleanupKeyPresent, !cleanupEnabled {
+            let gb = Double(physicalMemory) / 1_073_741_824
+            NSLog("pomvox-engine: low-memory Mac (%.1f GB) — cleanup off by default "
+                  + "until the Hub prompt is answered", gb)
+        }
+        cleanupStyle = doc.string("cleanup", "style") ?? "polish"
+        cleanupTimeoutS = doc.double("cleanup", "timeout_s") ?? 5.0
+        cleanupModelID = doc.string("cleanup", "model")
+            ?? MemoryTier.firstRunCleanupModel(physicalMemoryBytes: physicalMemory)
+        var next = cleanupAvailability
+        next.enabled = cleanupEnabled
+        cleanupAvailability = next
+    }
+
+    /// Disk download, in a detached task. Not cancelled by disarm or by an
+    /// utterance timeout — see `cleanupDownloadTask`.
+    private func startCleanupDownload(modelID: String) {
+        guard cleanupDownloadTask == nil, !cleanupAvailability.downloadInFlight else { return }
+        let next = cleanupAvailability.applying(.downloadStarted)
+        guard next.downloadInFlight else { return }
+        cleanupAvailability = next
+        let gate = LineGate()
+        cleanupDownloadTask = Task.detached { [cleanup, weak self] in
+            do {
+                try await cleanup.downloadWeights(modelID: modelID) { [weak self] fraction in
+                    let line = CleanupAvailability.modelStatusLine(.downloading(fraction: fraction))
+                    guard gate.changed(line) else { return }
+                    Task { @MainActor [weak self] in
+                        guard let self else { return }
+                        self.cleanupAvailability = self.cleanupAvailability.applying(.progress(fraction))
+                    }
+                }
+            } catch {
+                let message = CleanupAvailability.failureMessage(error)
+                await MainActor.run { [weak self] in
+                    guard let self else { return }
+                    self.cleanupDownloadTask = nil
+                    self.cleanupAvailability = self.cleanupAvailability
+                        .applying(.failed(.download(message)))
+                    NSLog("pomvox-engine: cleanup model download FAILED: %@", message)
+                }
+                return
+            }
+            await MainActor.run { [weak self] in
+                guard let self else { return }
+                self.cleanupDownloadTask = nil
+                guard self.cleanupModelID == modelID else {
+                    // Finished a download the user has since switched away from.
+                    var next = self.cleanupAvailability
+                    next.downloadInFlight = false
+                    next.phase = .notDownloaded
+                    self.cleanupAvailability = next
+                    self.syncCleanupModel()
+                    return
+                }
+                self.cleanupAvailability = self.cleanupAvailability.applying(.downloadFinished)
+                guard self.cleanupEnabled, self.acceptingCleanupLoad else { return }
+                self.beginCleanupLoad(modelID: modelID)
+            }
+        }
+    }
+
+    /// Load weights that are already on disk. Cancelled on disarm (the
+    /// snapshot remains). Not cancelled by an utterance timeout — this task
+    /// is not a child of `cleanupWithWatchdog`.
+    private func beginCleanupLoad(modelID: String) {
         // The guard and the `cleanupLoadTask` assignment below run without an
         // intervening await, and NativeEngine is @MainActor, so two triggers
-        // (the delayed preload racing a first-use press) are serialized on the
-        // main actor: the first installs the task token, the second sees it
-        // non-nil and bails. That makes the dedup atomic without extra locking.
-        guard cleanupEnabled, isArmed, cleanupLoadTask == nil else { return }
-        let modelID = cleanupModelID
+        // are serialized: the first installs the task token, the second sees
+        // it non-nil and bails.
+        guard cleanupEnabled, acceptingCleanupLoad, cleanupLoadTask == nil else { return }
         let hint = cleanupHint
         let style = cleanupStyle
         let speculative = cleanupSpeculative
-        let markWarmed = markWarmedOnSuccess
-        let polishGate = LineGate()
+        let markWarmed = markCleanupWarmedOnLoad
+        cleanupAvailability = cleanupAvailability.applying(.loadStarted)
         cleanupLoadTask = Task { [cleanup, weak self] in
-            if await cleanup.isLoaded {
+            let resident = await cleanup.isLoaded
+            let residentID = await cleanup.loadedModel
+            if resident, residentID == modelID {
                 await MainActor.run {
                     guard let self, !self.isStaleCleanupLoad() else { return }
                     self.cleanupLoadTask = nil
-                    // Already resident (e.g. preload finished before this
-                    // first-use trigger): reset the idle clock so a fresh use
-                    // isn't measured from the old load time.
                     self.cleanupLoadedAt = CFAbsoluteTimeGetCurrent()
-                    // The model is warm — an onboarding warm counts as done.
-                    if markWarmed { OnboardingWarm().markWarmed() }
+                    self.cleanupAvailability = self.cleanupAvailability.applying(.loadFinished)
+                    if markWarmed {
+                        OnboardingWarm().markWarmed()
+                        self.markCleanupWarmedOnLoad = false
+                    }
                 }
                 return
             }
@@ -457,34 +620,34 @@ final class NativeEngine: ObservableObject {
             // (rc.1's cold-launch first dictation burned its whole deadline
             // behind the other style's build and pasted raw).
             await cleanup.setPreferredStyle(style)
-            await MainActor.run {
-                self?.polishLoad = ModelLoad.line(.polish, fraction: nil, downloading: false)
-            }
-            let outcome = await cleanup.prepare(modelID: modelID) { [weak self] fraction in
-                let line = ModelLoad.line(.polish, fraction: fraction, downloading: true)
-                guard polishGate.changed(line) else { return }
-                Task { @MainActor in self?.polishLoad = line }
-            }
+            // No download progress here. The snapshot was fetched by
+            // startCleanupDownload; prepare() hits the cache and loads.
+            // A progress callback would report "downloading" for a cache hit
+            // and hide the real "loading" phase.
+            let outcome = await cleanup.prepare(modelID: modelID)
             await MainActor.run {
                 guard let self else { return }
                 // If this load's Task was cancelled (disarm/teardown) or the
-                // session otherwise ended while the ~2 GB load was in flight,
+                // session otherwise ended while the load was in flight,
                 // drop the completion entirely: it must not emit telemetry,
                 // persist the onboarding flag, or clobber a subsequent re-arm's
                 // fresh load token. Cancellation is cooperative (prepare() does
                 // not poll it), so honoring it here is the single checkpoint.
+                // The download task is a different task and is not cancelled
+                // along with this one.
                 guard !self.isStaleCleanupLoad() else { return }
-                self.polishLoad = nil
                 self.cleanupLoadTask = nil
                 switch outcome {
                 case .loaded:
                     // The idle-evict clock starts when the load actually
-                    // completes, so a slow (~2 GB first-run) load isn't
-                    // counted as idle time against the model.
+                    // completes, so a slow first-run load isn't counted as
+                    // idle time against the model.
                     self.cleanupLoadedAt = CFAbsoluteTimeGetCurrent()
-                    // The eager onboarding warm (if any) succeeded — record it
-                    // now, gated on the completed load rather than up front.
-                    if markWarmed { OnboardingWarm().markWarmed() }
+                    self.cleanupAvailability = self.cleanupAvailability.applying(.loadFinished)
+                    if markWarmed {
+                        OnboardingWarm().markWarmed()
+                        self.markCleanupWarmedOnLoad = false
+                    }
                     // Exactly one cold_start per load, structurally: prepare()
                     // returns `.loaded` only to the single deduped Task that
                     // actually brought the model up — concurrent triggers get
@@ -496,27 +659,16 @@ final class NativeEngine: ObservableObject {
                 case .skipped:
                     // A concurrent load beat us to it; leave its bookkeeping.
                     break
-                case .failed:
-                    // Non-fatal (raw transcript still pastes) but not silent.
-                    NSLog("pomvox-engine: cleanup model load FAILED — dictation will paste raw")
+                case .failed(let reason):
+                    // Non-fatal (raw transcript still pastes) but visible.
+                    self.cleanupAvailability = self.cleanupAvailability
+                        .applying(.failed(.load(reason)))
+                    NSLog("pomvox-engine: cleanup model load FAILED: %@ — dictation will paste raw",
+                          reason)
                     var p = TelemetryProps(); p.errorCode = "cleanup_load_failed"
                     TelemetryClient.shared.emit(.error, props: p)
                 }
             }
-        }
-    }
-
-    /// After a short post-launch delay, preload cleanup so a user reading the UI
-    /// has a warm model before their first dictation — without blocking startup.
-    private func scheduleCleanupPreload() {
-        cleanupPreloadTask?.cancel()
-        let delay = cleanupPreloadDelayS
-        cleanupPreloadTask = Task { [weak self] in
-            if delay > 0 {
-                try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
-            }
-            guard !Task.isCancelled else { return }
-            await MainActor.run { self?.ensureCleanupLoaded() }
         }
     }
 
@@ -558,6 +710,9 @@ final class NativeEngine: ObservableObject {
                 if didEvict {
                     await MainActor.run {
                         self?.cleanupLoadedAt = nil
+                        if let self {
+                            self.cleanupAvailability = self.cleanupAvailability.applying(.evicted)
+                        }
                         NSLog("pomvox-engine: cleanup idle > %.0fs — evicted (reloads on next use)",
                               evictS)
                     }
@@ -587,6 +742,7 @@ final class NativeEngine: ObservableObject {
                 if await cleanup.unload(ifGeneration: generation) {
                     await MainActor.run {
                         self.cleanupLoadedAt = nil
+                        self.cleanupAvailability = self.cleanupAvailability.applying(.evicted)
                         NSLog("pomvox-engine: memory pressure (%@) — cleanup evicted (reloads on next use)",
                               event.contains(.critical) ? "critical" : "warning")
                     }
@@ -597,9 +753,11 @@ final class NativeEngine: ObservableObject {
         cleanupPressureSource = source
     }
 
-    /// Cancel every cleanup-residency task (disarm / re-arm).
+    /// Cancel residency bookkeeping and the in-memory load. The snapshot
+    /// download is intentionally not cancelled: this runs on disarm, which is
+    /// exactly the "turn the engine off and on to apply cleanup" path, and
+    /// cancelling the download there is what left a lock file and no blobs.
     private func stopCleanupResidency() {
-        cleanupPreloadTask?.cancel(); cleanupPreloadTask = nil
         cleanupResidencyTask?.cancel(); cleanupResidencyTask = nil
         cleanupPressureSource?.cancel(); cleanupPressureSource = nil
         cleanupLoadTask?.cancel(); cleanupLoadTask = nil
@@ -612,6 +770,7 @@ final class NativeEngine: ObservableObject {
     }
 
     func disarm() {
+        acceptingCleanupLoad = false
         unregisterSleepWakeObservers()
         pendingTapRecreate = false
         tap?.stop(); tap = nil
@@ -628,7 +787,9 @@ final class NativeEngine: ObservableObject {
         pidfile.release()
         resetMachine()
         persist(false)
-        speechLoad = nil; polishLoad = nil
+        speechLoad = nil
+        // Weights are gone; a download still in flight stays in flight.
+        cleanupAvailability = cleanupAvailability.applying(.engineRestarted)
         status = .off
     }
 
@@ -698,46 +859,17 @@ final class NativeEngine: ObservableObject {
         }
         NSLog("pomvox-engine: stt model — %@ (FluidAudio %@)",
               sttModelID, sttModel.rawValue)
-        // Memory-aware first-run default: on a fresh install (no config yet) on a
-        // low-memory Mac, cleanup defaults off so raw dictation (~600 MB) works
-        // out of the box instead of the ~2.6 GB armed+cleanup cost swapping. An
-        // existing config or an explicit key is always honored — this can only
-        // supply a default for an absent key on a brand-new install.
-        //
-        // The choice is no longer persisted silently (item 7): the engine runs
-        // with the in-memory default, and the Hub shows a one-time prompt
-        // (LowMemoryCleanupModel) that writes the user's explicit choice — so a
-        // low-memory user understands the tradeoff instead of a missing feature.
-        let physicalMemory = ProcessInfo.processInfo.physicalMemory
-        let lowMem = MemoryTier.isLowMemory(physicalMemory)
-        // The fresh-state default is keyed on whether the one-time low-memory
-        // prompt has been answered — NOT on config-file existence. persist(true)
-        // writes config.toml at the end of every arm(), so a file-existence
-        // heuristic flipped the low-memory default back on at the second arm
-        // (and the model to 4B), loading the ~2 GB LLM on exactly the low-RAM
-        // Macs this guards. Engine and Hub are one process, so the engine reads
-        // the same flag the Hub's LowMemoryCleanupModel writes.
-        let lowMemPrompted = UserDefaults.standard.bool(forKey: LowMemoryCleanupModel.promptedKey)
-        let cleanupKeyPresent = doc.bool("cleanup", "enabled") != nil
-        cleanupEnabled = doc.bool("cleanup", "enabled")
-            ?? MemoryTier.firstRunCleanupDefault(isLowMemory: lowMem, lowMemPrompted: lowMemPrompted)
-        if lowMem, !cleanupKeyPresent, !cleanupEnabled {
-            let gb = Double(physicalMemory) / 1_073_741_824
-            NSLog("pomvox-engine: low-memory Mac (%.1f GB) — cleanup off by default "
-                  + "until the Hub prompt is answered", gb)
-        }
-        cleanupStyle = doc.string("cleanup", "style") ?? "polish"
-        cleanupTimeoutS = doc.double("cleanup", "timeout_s") ?? 5.0
-        // Item 6: memory-aware model-size default (1.7B on ≤8 GB, the
-        // SimpleWords fine-tune on 16 GB+) when no explicit [cleanup] model
-        // key. Keyed on the memory tier, not on config-file existence, so the
-        // compact model survives a re-arm.
-        cleanupModelID = doc.string("cleanup", "model")
-            ?? MemoryTier.firstRunCleanupModel(physicalMemoryBytes: physicalMemory)
-        // Residency tuning (items 4 & 5): how long after arm to preload cleanup
-        // in the background, and how long idle before evicting it. 0 disables.
-        cleanupPreloadDelayS = doc.double("cleanup", "preload_delay_s")
-            ?? CleanupResidency.defaultPreloadDelayS
+        // Memory-aware first-run default and the compact-model default live in
+        // loadCleanupSettings (also the hot-apply path). The low-memory prompt
+        // flag, not config-file existence, decides the default: persist(true)
+        // writes config.toml at the end of every arm(), and a file-existence
+        // heuristic used to flip cleanup back on at the second arm.
+        let lowMem = MemoryTier.isLowMemory(ProcessInfo.processInfo.physicalMemory)
+        loadCleanupSettings(from: doc)
+        // `[cleanup] preload_delay_s` is intentionally not read. The download
+        // used to wait out that delay on a task disarm() cancelled, so turning
+        // the engine off and on — what the old UI told people to do — aborted
+        // the transfer. The download starts as soon as cleanup is on.
         cleanupIdleEvictS = doc.double("cleanup", "idle_evict_s")
             ?? CleanupResidency.defaultIdleEvictS(isLowMemory: lowMem)
         cleanupSpeculative = doc.bool("cleanup", "speculative") ?? true
@@ -944,7 +1076,9 @@ final class NativeEngine: ObservableObject {
         // hot path — this dictation still pastes raw if cleanup isn't ready yet.
         if cleanupEnabled {
             cleanupLastUsedAt = CFAbsoluteTimeGetCurrent()
-            ensureCleanupLoaded()
+            // Starts a download or a load if needed. Does not wait, and the
+            // utterance below must not cancel either one.
+            syncCleanupModel()
         }
         let samples = capture.stop()
         machineLock.lock(); let t0 = stopAt; machineLock.unlock()
@@ -989,21 +1123,51 @@ final class NativeEngine: ObservableObject {
             // speech to polish — the model invents words from it. The draft
             // loop is already stopped (`finishing`), so the GPU pass never
             // overlaps STT on the ANE.
+            var cleanupNotice: String?
             if doCleanup, !isBlankTranscript(raw) {
-                self.bus.post(.state("polishing", coldMark))
-                let (cleaned, status) = await cleanupWithWatchdog(
-                    self.cleanup, raw: raw, style: style, timeoutS: timeoutS)
-                text = cleaned
-                cleanupStatus = status
-                timings.stamp("cleanup")
-                if status != .ok {
-                    NSLog("pomvox-engine: cleanup %@ — pasting raw", status.rawValue)
+                let phase = self.cleanupPhase
+                if let notice = CleanupAvailability.dictationNotice(phase) {
+                    // Model isn't ready and waiting out the 5 s budget would
+                    // not make a multi-GB download finish. Don't enter
+                    // cleanupWithWatchdog: its cancelAll() is how a deadline
+                    // used to be able to reach whatever shared the utterance
+                    // task. The download/load tasks are not in that group,
+                    // and this branch does not cancel them.
+                    self.cleanupAvailability = self.cleanupAvailability.applying(.utteranceTimedOut)
+                    cleanupNotice = notice
+                    cleanupStatus = .unavailable
+                    NSLog("pomvox-engine: %@ — pasting raw", notice)
+                } else {
+                    self.bus.post(.state("polishing", coldMark))
+                    let (cleaned, status) = await cleanupWithWatchdog(
+                        self.cleanup, raw: raw, style: style, timeoutS: timeoutS)
+                    text = cleaned
+                    cleanupStatus = status
+                    timings.stamp("cleanup")
+                    if status != .ok {
+                        NSLog("pomvox-engine: cleanup %@ — pasting raw", status.rawValue)
+                        // A real generation timeout (model was resident) stays
+                        // `.timeout`. Timing out while the weights were still
+                        // coming in is "unavailable", and the download/load
+                        // is still running — this did not cancel it.
+                        if self.cleanupPhase != .ready {
+                            self.cleanupAvailability = self.cleanupAvailability
+                                .applying(.utteranceTimedOut)
+                            cleanupStatus = .unavailable
+                            cleanupNotice = CleanupAvailability.dictationNotice(
+                                self.cleanupPhase, afterWaiting: true)
+                            if let cleanupNotice {
+                                NSLog("pomvox-engine: %@", cleanupNotice)
+                            }
+                        }
+                    }
                 }
                 // The prefill/decode split for this pass, so history rows say
                 // WHERE cleanup time went, not just how much. A timeout while
                 // waiting for a reload never reached the model — its stats
                 // would be the previous dictation's, so skip them.
-                if status != .timeout, let stats = await self.cleanup.lastGenStats {
+                if let cleanupStatus, cleanupStatus != .timeout, cleanupStatus != .unavailable,
+                   let stats = await self.cleanup.lastGenStats {
                     for (key, value) in stats.timingNotes() { timings.note(key, value) }
                 }
             }
@@ -1055,12 +1219,22 @@ final class NativeEngine: ObservableObject {
                 switch outcome {
                 case .pasted:
                     pastedAt = pasteT
-                    self.bus.post(.result("ok", text))
+                    if let cleanupNotice {
+                        // The raw words are in the focused field. Say why they
+                        // weren't cleaned — a silent paste was the bug.
+                        self.bus.post(.result("error", cleanupNotice))
+                    } else {
+                        self.bus.post(.result("ok", text))
+                    }
                     NSLog("engine: paste %.0fms (%d chars)", self.lastPasteMs ?? 0, text.count)
                 case .copiedToClipboard:
                     // No editable field had focus — the transcript is on the
                     // clipboard, not lost. Tell the user via the HUD flash.
-                    self.bus.post(.result("error", "copied to clipboard"))
+                    if let cleanupNotice {
+                        self.bus.post(.result("error", "\(cleanupNotice) — copied to clipboard"))
+                    } else {
+                        self.bus.post(.result("error", "copied to clipboard"))
+                    }
                     NSLog("engine: no focused field — left %d chars on the clipboard", text.count)
                 }
                 self.doneMachine()

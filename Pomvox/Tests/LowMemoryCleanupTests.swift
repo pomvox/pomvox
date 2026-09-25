@@ -74,6 +74,19 @@ final class LowMemoryCleanupTests: XCTestCase {
                        "an explicit model choice must not be overwritten")
     }
 
+    /// Enabling must tell the running engine. The sheet used to only set
+    /// `lowMemPrompted` and a config key that nothing read until the next arm,
+    /// so the compact model never started downloading.
+    @MainActor
+    func testEnableCleanupNotifiesTheEngineToStartTheDownload() throws {
+        let path = try tempConfigPath()
+        let model = LowMemoryCleanupModel(
+            defaults: freshDefaults(), configPath: path, physicalMemory: 8 * Self.gb)
+        let exp = expectation(forNotification: .pomvoxSettingsDidChange, object: nil)
+        model.enableCleanup()
+        wait(for: [exp], timeout: 1)
+    }
+
     /// "Keep it off" records the choice and seeds compact only when unset.
     @MainActor
     func testKeepOffRecordsChoiceAndSeedsCompactOnlyWhenUnset() throws {

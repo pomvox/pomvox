@@ -50,8 +50,11 @@ struct SettingsValues: Equatable {
 /// only touches keys the user actually changed, so untouched comments and
 /// sections survive byte-for-byte (the M2 acceptance test).
 enum SettingsIO {
-    static func read(_ doc: ConfigDocument) -> SettingsValues {
+    static func read(
+        _ doc: ConfigDocument, cleanupModelDefault: String? = nil
+    ) -> SettingsValues {
         let d = SettingsValues.defaults
+        let modelDefault = cleanupModelDefault ?? d.cleanupModel
         return SettingsValues(
             cleanupEnabled: doc.bool("cleanup", "enabled") ?? d.cleanupEnabled,
             cleanupStyle: doc.string("cleanup", "style") ?? d.cleanupStyle,
@@ -63,7 +66,7 @@ enum SettingsIO {
             signatureEnabled: doc.bool("signature", "enabled") ?? d.signatureEnabled,
             signatureMark: doc.string("signature", "mark") ?? d.signatureMark,
             sttModel: doc.string("stt", "model") ?? d.sttModel,
-            cleanupModel: doc.string("cleanup", "model") ?? d.cleanupModel,
+            cleanupModel: doc.string("cleanup", "model") ?? modelDefault,
             ptt: doc.string("hotkey", "ptt") ?? d.ptt,
             toggle: doc.string("hotkey", "toggle") ?? d.toggle,
             stop: doc.string("hotkey", "stop") ?? d.stop,
@@ -172,7 +175,13 @@ final class SettingsModel: ObservableObject {
     }
 
     func load() {
-        let v = SettingsIO.read(ConfigDocument.load(path: path))
+        // Absent [cleanup] model follows the machine: compact on ≤8 GB, the
+        // standard fine-tune otherwise. The struct default stays the standard
+        // id so a 16 GB read of an empty file still matches SettingsValues.defaults.
+        let v = SettingsIO.read(
+            ConfigDocument.load(path: path),
+            cleanupModelDefault: MemoryTier.firstRunCleanupModel(
+                physicalMemoryBytes: ProcessInfo.processInfo.physicalMemory))
         values = v
         saved = v
         errors = [:]
@@ -192,7 +201,6 @@ final class SettingsModel: ObservableObject {
     var pendingRestart: [String] {
         var out: [String] = []
         if values.sttModel != saved.sttModel { out.append("STT model") }
-        if values.cleanupModel != saved.cleanupModel { out.append("Cleanup model") }
         if [values.ptt, values.toggle, values.stop, values.cancel, values.quickAdd]
             != [saved.ptt, saved.toggle, saved.stop, saved.cancel, saved.quickAdd] { out.append("Hotkeys") }
         if values.audioDevice != saved.audioDevice { out.append("Input device") }

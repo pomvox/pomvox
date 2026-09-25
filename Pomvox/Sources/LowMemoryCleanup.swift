@@ -48,17 +48,17 @@ final class LowMemoryCleanupModel: ObservableObject {
             alreadyPrompted: defaults.bool(forKey: Self.promptedKey))
     }
 
-    /// Turn cleanup on. Takes effect on the next engine arm (models are
-    /// snapshot-at-arm), like any model change — see the sheet copy, which says
-    /// so. Seeds the compact model only when the user hasn't chosen one.
+    /// Turn cleanup on and seed the compact model when the user hasn't chosen
+    /// one. Posts `.pomvoxSettingsDidChange` so the running engine starts the
+    /// download immediately — writing `lowMemPrompted` alone does not.
     func enableCleanup() {
-        writeChoice(enabled: true)
+        guard writeChoice(enabled: true) else { return }
         finish()
     }
 
     /// Keep cleanup off — but record the explicit choice so we don't re-ask.
     func keepOff() {
-        writeChoice(enabled: false)
+        guard writeChoice(enabled: false) else { return }
         finish()
     }
 
@@ -67,13 +67,25 @@ final class LowMemoryCleanupModel: ObservableObject {
     /// enable on this low-memory Mac stays compact (item 6) without overwriting
     /// an explicit `cleanup.model` the user set. The config is loaded exactly
     /// once (both the model check and the writes share this `doc`).
-    private func writeChoice(enabled: Bool) {
+    /// Persist the choice. Returns false (and leaves the prompt up) when the
+    /// file can't be written — otherwise we'd set `lowMemPrompted` and never
+    /// start a download.
+    private func writeChoice(enabled: Bool) -> Bool {
         var doc = ConfigDocument.load(path: configPath)
         doc.set("cleanup", "enabled", bool: enabled)
         if doc.string("cleanup", "model") == nil {
             doc.set("cleanup", "model", string: recommendedModel)
         }
-        try? doc.write(to: configPath)
+        do {
+            try doc.write(to: configPath)
+        } catch {
+            NSLog("cleanup: failed to save the low-memory choice: %@", String(describing: error))
+            return false
+        }
+        NSLog("cleanup: low-memory choice enabled=%@ model=%@",
+              enabled ? "yes" : "no",
+              doc.string("cleanup", "model") ?? recommendedModel)
+        return true
     }
 
     private func finish() {
@@ -86,6 +98,9 @@ final class LowMemoryCleanupModel: ObservableObject {
         // it signals only that *a* setting changed, never which one or its
         // value, so it can't reveal the user's answer.
         TelemetryClient.shared.emit(.settingChanged)
+        // The engine hot-applies [cleanup] off this, same as a Settings save,
+        // and starts the compact-model download when the choice was "on".
+        NotificationCenter.default.post(name: .pomvoxSettingsDidChange, object: nil)
     }
 }
 
@@ -97,8 +112,8 @@ enum LowMemoryCleanupCopy {
         + "memory while active (we'd use the compact model on your Mac). Dictation works "
         + "great without it, so it's off by default here. Enable it anyway?"
     static let footer =
-        "Enabling takes effect the next time the engine starts (turn it off and on in "
-        + "the menu bar to apply now). You can change this anytime in Settings → Models."
+        "Enabling downloads the compact model now and turns cleanup on — no engine "
+        + "restart. You can change this anytime in Settings → Models."
 }
 
 /// One-time low-memory cleanup choice. Equal-weight buttons, no dark pattern —
