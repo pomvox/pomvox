@@ -396,7 +396,7 @@ func runCleanup(
     }
     guard let out else { return (text, .timeout) }
     guard let accepted = CleanupLogic.acceptOutput(raw: text, cleaned: out) else {
-        NSLog("cleanup: rejected output %@", String(out.prefix(200)))
+        NSLog("cleanup: rejected output (%d chars for %d)", out.count, text.count)
         return (text, .rejected)
     }
     return (accepted, .ok)

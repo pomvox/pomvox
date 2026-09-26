@@ -113,6 +113,69 @@ private struct SettingsPill: View {
 
 // MARK: - Panes
 
+/// The Cleanup group, extracted so it renders from plain values (and so a
+/// test can render it for each backend).
+struct CleanupSettingsGroup: View {
+    @ObservedObject var model: SettingsModel
+    let backend: CleanupBackendKind
+    let controls: CleanupControls
+    let problem: String?
+    let packSummary: String?
+    let availability: CleanupAvailabilityState
+
+    var body: some View {
+        SettingsGroup("Cleanup") {
+            SettingRow(title: "Clean up transcripts",
+                       desc: "Run the local LLM pass after speech-to-text.") {
+                SettingToggle(isOn: $model.values.cleanupEnabled, label: "Clean up transcripts")
+            }
+            RowDivider()
+            InfoRow(symbol: CleanupAvailability.statusSymbol(availability),
+                    text: CleanupAvailability.runtimeSummary(availability))
+            if backend == .sdk {
+                RowDivider()
+                SettingRow(title: "Cleanup engine",
+                           desc: packSummary.map { "Local SDK pack \($0)." }
+                               ?? "Local SDK pack — preparing.") {
+                    Text("On-device").font(Typo.ui(12.5)).foregroundStyle(Palette.muted)
+                }
+            }
+            if let problem {
+                RowDivider()
+                SettingRow(title: "Cleanup needs attention", desc: problem) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundStyle(Palette.ember)
+                        .accessibilityLabel("Cleanup configuration problem")
+                }
+            }
+            RowDivider()
+            if controls.style {
+                SettingRow(title: "Style") {
+                    SegmentControl(options: [("light", "Light"), ("polish", "Polish")],
+                                   selection: $model.values.cleanupStyle,
+                                   accessibilityLabel: "Cleanup style")
+                }
+            } else {
+                // Never offer a control the running backend would ignore.
+                SettingRow(title: "Style",
+                           desc: "This cleanup pack uses one fixed prompt, so style isn't adjustable.") {
+                    Text("Fixed").font(Typo.ui(12.5)).foregroundStyle(Palette.muted)
+                }
+            }
+            RowDivider()
+            SettingRow(title: "Cleanup timeout",
+                       desc: "The budget for a typical dictation; a long one gets "
+                           + "proportionally more. On timeout the raw transcript is "
+                           + "inserted instead.") {
+                SliderControl(value: $model.values.cleanupTimeoutS, range: 1...15, step: 0.5,
+                              label: "Cleanup timeout") {
+                    String(format: "%.1f s", $0)
+                }
+            }
+        }
+    }
+}
+
 private struct GeneralPane: View {
     @EnvironmentObject var model: SettingsModel
     @EnvironmentObject var engine: NativeEngine
@@ -120,31 +183,10 @@ private struct GeneralPane: View {
         VStack(alignment: .leading, spacing: 0) {
             NativeEngineGroup()
             LoginItemGroup()
-            SettingsGroup("Cleanup") {
-                SettingRow(title: "Clean up transcripts",
-                           desc: "Run the local LLM pass after speech-to-text.") {
-                    SettingToggle(isOn: $model.values.cleanupEnabled, label: "Clean up transcripts")
-                }
-                RowDivider()
-                InfoRow(symbol: CleanupAvailability.statusSymbol(engine.cleanupAvailability),
-                        text: CleanupAvailability.runtimeSummary(engine.cleanupAvailability))
-                RowDivider()
-                SettingRow(title: "Style") {
-                    SegmentControl(options: [("light", "Light"), ("polish", "Polish")],
-                                   selection: $model.values.cleanupStyle,
-                                   accessibilityLabel: "Cleanup style")
-                }
-                RowDivider()
-                SettingRow(title: "Cleanup timeout",
-                           desc: "The budget for a typical dictation; a long one gets "
-                               + "proportionally more. On timeout the raw transcript is "
-                               + "inserted instead.") {
-                    SliderControl(value: $model.values.cleanupTimeoutS, range: 1...15, step: 0.5,
-                                  label: "Cleanup timeout") {
-                        String(format: "%.1f s", $0)
-                    }
-                }
-            }
+            CleanupSettingsGroup(
+                model: model, backend: engine.cleanupBackendKind, controls: engine.cleanupControls,
+                problem: engine.cleanupProblem, packSummary: engine.cleanupPackSummary,
+                availability: engine.cleanupAvailability)
             SettingsGroup("Dictation mark") {
                 SettingRow(
                     title: "Mark every dictation",

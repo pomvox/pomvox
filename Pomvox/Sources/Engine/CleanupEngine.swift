@@ -891,10 +891,6 @@ actor CleanupEngine: CleanupCleaning {
     func downloadWeights(
         modelID: String, onProgress: (@Sendable (Double) -> Void)? = nil
     ) async throws {
-        let reclaimed = HuggingFaceStaleLock.reclaimUnheldLocks(forRepo: modelID)
-        if reclaimed > 0 {
-            NSLog("cleanup: removed %d stale lock file(s) for %@", reclaimed, modelID)
-        }
         NSLog("cleanup: downloading %@", modelID)
         do {
             switch CleanupPromptProfile.forModel(modelID) {
@@ -915,15 +911,13 @@ actor CleanupEngine: CleanupCleaning {
     /// directory. `downloadSnapshot` short-circuits on a complete cached
     /// snapshot and falls back to the cache when the remote listing fails, so
     /// this is no more network-dependent than the stock loader.
-    private static func fetchFrozenSnapshot(
+    /// Internal (not private) since the SDK backend's pack installer acquires
+    /// the same snapshot through the same globs — one download path, one
+    /// stray-weight check, whichever backend is configured.
+    static func fetchFrozenSnapshot(
         modelID: String, onProgress: (@Sendable (Double) -> Void)?
     ) async throws -> URL {
-        guard let repo = Repo.ID(rawValue: modelID) else {
-            throw FrozenPromptError.badRepoID(modelID)
-        }
-        return try await HubClient.default.downloadSnapshot(
-            of: repo, matching: frozenSnapshotGlobs,
-            progressHandler: { progress in onProgress?(progress.fractionCompleted) })
+        try await sharedSnapshot(modelID: modelID, globs: frozenSnapshotGlobs, onProgress: onProgress)
     }
 
     /// Same cache write as the frozen path, with the globs the stock loader
@@ -932,12 +926,27 @@ actor CleanupEngine: CleanupCleaning {
     private static func fetchLegacySnapshot(
         modelID: String, onProgress: (@Sendable (Double) -> Void)?
     ) async throws -> URL {
+        try await sharedSnapshot(modelID: modelID, globs: legacySnapshotGlobs, onProgress: onProgress)
+    }
+
+    /// One detached download per repo, whoever asks (`SharedSnapshotFetch`).
+    /// Stale Hugging Face lock files are removed first when nothing holds
+    /// them; a lock a live download still holds is left alone.
+    private static func sharedSnapshot(
+        modelID: String, globs: [String], onProgress: (@Sendable (Double) -> Void)?
+    ) async throws -> URL {
         guard let repo = Repo.ID(rawValue: modelID) else {
             throw FrozenPromptError.badRepoID(modelID)
         }
-        return try await HubClient.default.downloadSnapshot(
-            of: repo, matching: legacySnapshotGlobs,
-            progressHandler: { progress in onProgress?(progress.fractionCompleted) })
+        return try await SharedSnapshotFetch.shared.fetch(modelID, onProgress: onProgress) { progress in
+            let reclaimed = HuggingFaceStaleLock.reclaimUnheldLocks(forRepo: modelID)
+            if reclaimed > 0 {
+                NSLog("cleanup: removed %d stale lock file(s) for %@", reclaimed, modelID)
+            }
+            return try await HubClient.default.downloadSnapshot(
+                of: repo, matching: globs,
+                progressHandler: { p in progress(p.fractionCompleted) })
+        }
     }
 
     /// Read the frozen prompt out of a snapshot directory.

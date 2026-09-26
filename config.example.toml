@@ -32,6 +32,17 @@ model = "mlx-community/parakeet-tdt-0.6b-v2"
 # can turn it on knowing the tradeoff — set it here to override. Existing configs
 # are never changed automatically.
 enabled = true
+# Which cleanup implementation runs (native app only). "sdk" uses the external
+# pomvox-cleanup-engine package against a verified model pack; "inapp" uses the
+# engine that shipped through v0.2.8. Unset, the SDK runs when `model` below is
+# the one its pack serves (simplewords-dictation-cleanup-v3), otherwise the
+# in-app engine. Applies on save: the other backend's model is closed first.
+# backend = "sdk"
+# The SDK backend installs its verified pack once, immutably, under
+# ~/Library/Application Support/Pomvox/CleanupPacks (APFS-cloned from the model
+# snapshot the in-app engine downloads, so the weights are not stored twice).
+# It honours only the dictionary: `style` and `speculative` below apply to
+# "inapp" and are ignored by "sdk".
 # Cleanup model. A fresh install picks a size that fits your Mac's RAM: the
 # compact Qwen3-1.7B-4bit on <= 8 GB machines, a larger model on 16 GB+. The
 # Qwen3-8B-4bit preset is available but only sensible on higher-RAM machines.

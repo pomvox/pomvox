@@ -147,6 +147,10 @@ func tidyAfterWipe(_ text: String) -> String {
 /// prefix); `apply`/`applyReporting` run on the final text just before insertion.
 struct PomvoxDictionary {
     let hint: String
+    /// The words behind `hint`, in file order (empty when disabled). The SDK
+    /// backend selects its bounded vocabulary from these; the replacement
+    /// rules below always see the complete dictionary.
+    let cleanupWords: [String]
     private let compiled: [CompiledRule]
     private let enabled: Bool
 
@@ -154,6 +158,7 @@ struct PomvoxDictionary {
     init(file: DictionaryFile, enabled: Bool = true) {
         self.enabled = enabled
         self.hint = enabled ? dictionaryPromptHint(file.words) : ""
+        self.cleanupWords = enabled ? file.words : []
         self.compiled = enabled ? compileRules(file.rules) : []
         if enabled, !self.hint.isEmpty || !self.compiled.isEmpty {
             let termCount = file.words.filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }.count
