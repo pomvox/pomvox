@@ -308,6 +308,9 @@ struct RuleEditorSheet: View {
     @State private var accepted: Set<String> = []       // checked suggestion chips
     @State private var rejected: Set<String> = []       // unchecked suggestions stay rejected across refreshes
     @State private var previewText = ""
+    /// Model-generated suggestions need a second generation the SDK backend
+    /// does not offer; spelling-based suggestions still appear.
+    private let modelSuggestions = NativeEngine.shared.cleanupControls.modelVariantSuggestions
 
     private var isEditing: Bool { state.editing != nil }
 
@@ -343,6 +346,11 @@ struct RuleEditorSheet: View {
                     TextField("add what it hears…", text: $newSource)
                         .textFieldStyle(.plain).font(Typo.ui(12.5)).frame(width: 140)
                         .onSubmit { addSource(newSource); newSource = "" }
+                }
+                if !modelSuggestions {
+                    Text("Suggestions come from spelling patterns only — the on-device cleanup pack "
+                         + "doesn't generate them.")
+                        .font(Typo.ui(11)).foregroundStyle(Palette.muted)
                 }
             }
 
@@ -432,7 +440,7 @@ struct RuleEditorSheet: View {
             // Debounce: one LLM request per pause in typing, auto-cancelled by
             // SwiftUI on the next keystroke or when the sheet closes — a burst
             // of keystrokes must not queue generate() calls ahead of clean().
-            guard !target.trimmingCharacters(in: .whitespaces).isEmpty else { return }
+            guard modelSuggestions, !target.trimmingCharacters(in: .whitespaces).isEmpty else { return }
             try? await Task.sleep(nanoseconds: 400_000_000)
             guard !Task.isCancelled else { return }
             let llm = await NativeEngine.shared.variantSuggester.suggestVariants(for: target)
