@@ -27,7 +27,7 @@ enum SettingsSchema {
     /// the hotkey/event tap (built once at startup), the input device
     /// (InputStream built at startup), and log routing.
     ///
-    /// `[cleanup]` enabled, style, timeout, and model are NOT in this set.
+    /// `[cleanup]` enabled, style, timeout, model, and backend are NOT in this set.
     /// The native engine re-reads them on save (`applyCleanupSettingsFromDisk`)
     /// and starts or swaps the cleanup download without an engine restart —
     /// a restart used to cancel that download. config.py's `restart_required`

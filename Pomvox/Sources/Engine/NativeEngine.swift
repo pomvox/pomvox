@@ -86,7 +86,35 @@ final class NativeEngine: ObservableObject {
 
     /// UI access for the rule editor's variant suggestions — read-only use of
     /// the actor; `cleanup` is a `let`, so this is safe off the main actor.
+    /// Only reached while `cleanupControls.modelVariantSuggestions` is true:
+    /// under the SDK backend it would load a second resident model.
     nonisolated var variantSuggester: CleanupEngine { cleanup }
+
+    // [cleanup] backend = "sdk": the SDK host. Created at the first SDK arm and
+    // kept for the process, so a re-arm's opener waits for the previous arm's
+    // retiring cleaner (the SDK admits one resident model per process).
+    private var sdkHost: SDKCleanupHost?
+    /// The last enable/disable/vocabulary call sent to `sdkHost`. Each new one
+    /// waits for it, so a quick off→on (or disarm→arm) reaches the host in order.
+    private var sdkHostOp: Task<Void, Never>?
+    /// The backend this armed session runs (snapshot at arm).
+    @Published private(set) var cleanupBackendKind = CleanupBackendKind.defaultKind
+    /// Which cleanup controls the running backend honours; Settings and the
+    /// dictionary editor hide or disable the rest.
+    @Published private(set) var cleanupControls = CleanupControls.forBackend(
+        .defaultKind, capabilities: ["vocabulary"])
+    /// A cleanup setup failure the user has to act on (pack, manifest, runtime
+    /// compatibility). Nil when cleanup is configured correctly.
+    @Published private(set) var cleanupProblem: String?
+    /// "pack version · rules version" once the SDK cleaner has opened.
+    @Published private(set) var cleanupPackSummary: String?
+    /// The utterance that owns insertion; cancel/sleep/disarm retire it.
+    private let utterances = UtteranceSessions()
+    private var utteranceTask: Task<Void, Never>?
+    /// Whether an evicted cleaner may reopen (memory-pressure cool-down).
+    private var memoryPolicy = CleanupMemoryPolicy()
+    /// The trusted manifest's capabilities, until an opened pack reports its own.
+    private var sdkCapabilities: [String] = []
     private var tap: EventTap?
     private let configPath: String
 
@@ -377,7 +405,14 @@ final class NativeEngine: ObservableObject {
         // warmed during prepare() above. After this first warm, later launches
         // use the lazy path.
         acceptingCleanupLoad = true
-        if cleanupEnabled {
+        if cleanupEnabled, cleanupBackendKind == .sdk {
+            // SDK backend: prepare now — cleanup is enabled and armed, so the
+            // first dictation should not pay the open. No preload timer.
+            cleanupLastUsedAt = nil
+            cleanupLoadedAt = nil
+            await enableSDKCleanup().value
+            startCleanupResidencyWatchdog()
+        } else if cleanupEnabled {
             cleanupHint = dictionary.hint
             cleanupLastUsedAt = nil
             cleanupLoadedAt = nil
@@ -449,6 +484,17 @@ final class NativeEngine: ObservableObject {
     /// run even when the engine is still starting (disk only). Weight loads
     /// wait until `acceptingCleanupLoad`.
     private func syncCleanupModel(markWarmedOnSuccess: Bool = false) {
+        if cleanupBackendKind == .sdk {
+            // The SDK host owns download, install and open (one shared
+            // preparation). The in-app download/load must not also run: it
+            // would load a second resident model. Key-up lands here too —
+            // start the preparation early unless memory pressure evicted the
+            // cleaner and the policy still says no.
+            guard cleanupEnabled, isArmed, let sdkHost else { return }
+            let permitted = memoryPolicy.permitsReopen(at: CFAbsoluteTimeGetCurrent())
+            Task { await sdkHost.requestPreparation(reopenPermitted: permitted) }
+            return
+        }
         if markWarmedOnSuccess { markCleanupWarmedOnLoad = true }
         guard cleanupEnabled else { return }
         if cleanupDownloadTask != nil || cleanupLoadTask != nil { return }
@@ -467,6 +513,11 @@ final class NativeEngine: ObservableObject {
     /// only once cleanup is enabled and the engine is armed. A download
     /// already in flight is left alone (a second one deadlocks on the file lock).
     func downloadOrRetryCleanupModel() {
+        if cleanupBackendKind == .sdk {
+            // Retry = a fresh preparation; the host clears its last failure.
+            syncCleanupModel()
+            return
+        }
         guard cleanupDownloadTask == nil, cleanupLoadTask == nil else { return }
         switch cleanupAvailability.phase {
         case .notDownloaded, .failed:
@@ -484,7 +535,24 @@ final class NativeEngine: ObservableObject {
         let doc = ConfigDocument.load(path: configPath)
         let previousModel = cleanupModelID
         let wasEnabled = cleanupEnabled
+        let previousBackend = cleanupBackendKind
         loadCleanupSettings(from: doc)
+        applyCleanupBackend(from: doc)
+        if cleanupBackendKind != previousBackend {
+            switchCleanupBackend(from: previousBackend)
+            return
+        }
+        if cleanupBackendKind == .sdk {
+            // Timeout is read per dictation; style and model are not the
+            // SDK's (frozen prompt, one pack). Only the toggle acts here.
+            if wasEnabled, !cleanupEnabled {
+                disableSDKCleanup()
+            } else if !wasEnabled, cleanupEnabled, isArmed {
+                enableSDKCleanup()
+                if cleanupResidencyTask == nil { startCleanupResidencyWatchdog() }
+            }
+            return
+        }
         var next = cleanupAvailability
         next.enabled = cleanupEnabled
         if cleanupModelID != previousModel, cleanupDownloadTask == nil {
@@ -591,7 +659,8 @@ final class NativeEngine: ObservableObject {
         // intervening await, and NativeEngine is @MainActor, so two triggers
         // are serialized: the first installs the task token, the second sees
         // it non-nil and bails.
-        guard cleanupEnabled, acceptingCleanupLoad, cleanupLoadTask == nil else { return }
+        guard cleanupEnabled, acceptingCleanupLoad, cleanupLoadTask == nil,
+              cleanupBackendKind == .inapp else { return }
         let hint = cleanupHint
         let style = cleanupStyle
         let speculative = cleanupSpeculative
@@ -684,6 +753,29 @@ final class NativeEngine: ObservableObject {
             return
         }
         let interval = CleanupResidency.checkIntervalS(idleEvictS: evictS)
+        if cleanupBackendKind == .sdk, let sdkHost {
+            cleanupResidencyTask = Task { [weak self] in
+                while !Task.isCancelled {
+                    try? await Task.sleep(nanoseconds: UInt64(interval * 1_000_000_000))
+                    if Task.isCancelled { break }
+                    let resident = await sdkHost.isResident
+                    let now = CFAbsoluteTimeGetCurrent()
+                    let evict: Bool = await MainActor.run {
+                        guard let self else { return false }
+                        return CleanupResidency.shouldEvict(
+                            loaded: resident, lastUsedAt: self.cleanupLastUsedAt,
+                            loadedAt: self.cleanupLoadedAt, now: now, idleEvictS: evictS)
+                    }
+                    // The host refuses an idle eviction while a request is in
+                    // flight, so a dictation racing this check keeps its cleaner.
+                    if evict, await sdkHost.evict(.idle) {
+                        NSLog("pomvox-engine: cleanup idle > %.0fs — SDK cleaner closed (reopens on next use)",
+                              evictS)
+                    }
+                }
+            }
+            return
+        }
         cleanupResidencyTask = Task { [weak self, cleanup] in
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: UInt64(interval * 1_000_000_000))
@@ -727,11 +819,27 @@ final class NativeEngine: ObservableObject {
     private func startCleanupPressureWatch() {
         cleanupPressureSource?.cancel()
         let source = DispatchSource.makeMemoryPressureSource(
-            eventMask: [.warning, .critical], queue: .main)
+            eventMask: [.normal, .warning, .critical], queue: .main)
         source.setEventHandler { [weak self, cleanup] in
             guard let self else { return }
             let event = source.data
             let pressured = !event.intersection([.warning, .critical]).isEmpty
+            let level: CleanupMemoryPolicy.Level =
+                event.contains(.critical) ? .critical : (pressured ? .warning : .normal)
+            self.memoryPolicy.record(level, at: CFAbsoluteTimeGetCurrent())
+            if self.cleanupBackendKind == .sdk {
+                // Stop admission and close; stay evicted until an utterance
+                // needs cleanup and the policy permits — never reopen in
+                // response to this same event.
+                guard pressured, let host = self.sdkHost else { return }
+                Task {
+                    if await host.evict(.memoryPressure) {
+                        NSLog("pomvox-engine: memory pressure (%@) — SDK cleaner closing",
+                              event.contains(.critical) ? "critical" : "warning")
+                    }
+                }
+                return
+            }
             let pending = self.cleanupLoadTask != nil
             Task {
                 let generation = await cleanup.generation
@@ -781,6 +889,8 @@ final class NativeEngine: ObservableObject {
         // Unlike the ~600 MB Parakeet models (kept for fast re-arm), the
         // ~2 GB cleanup LLM is dropped on toggle-off; re-arm reloads in ~1.5s.
         stopCleanupResidency()
+        cancelUtterance(reason: "disarm")
+        disableSDKCleanup()
         Task { [cleanup] in await cleanup.unload() }
         bus.post(.state("idle", "ready"))   // hide the HUD if showing
         history?.close(); history = nil
@@ -812,6 +922,8 @@ final class NativeEngine: ObservableObject {
         tap?.stop(); tap = nil
         draftTask?.cancel(); draftTask = nil
         stopCleanupResidency()
+        cancelUtterance(reason: "quit")
+        disableSDKCleanup()
         endVadSession()
         capture.stop()
         capture.onBlock = nil
@@ -873,6 +985,9 @@ final class NativeEngine: ObservableObject {
         cleanupIdleEvictS = doc.double("cleanup", "idle_evict_s")
             ?? CleanupResidency.defaultIdleEvictS(isLowMemory: lowMem)
         cleanupSpeculative = doc.bool("cleanup", "speculative") ?? true
+        cleanupProblem = nil
+        cleanupPackSummary = nil
+        applyCleanupBackend(from: doc, atArm: true)
 
         historyEnabled = doc.bool("history", "enabled") ?? true
         historyRetentionDays = doc.int("history", "retention_days") ?? 7
@@ -920,6 +1035,19 @@ final class NativeEngine: ObservableObject {
             dictionaryPath: DictionaryPaths.dictionaryPath())
         dictionary = PomvoxDictionary(file: loaded.file, enabled: dictEnabled)
         NSLog("dictionary: hot-reloaded (%d rules)", loaded.file.rules.count)
+        if cleanupBackendKind == .sdk {
+            let vocabulary = SDKVocabulary.select(from: dictionary.cleanupWords)
+            if let line = vocabulary.omissionSummary { NSLog("%@", line) }
+            if let sdkHost {
+                Task {
+                    await sdkHost.setVocabulary(vocabulary)
+                    NotificationCenter.default.post(name: .pomvoxDictionaryHintApplied, object: nil)
+                }
+            } else {
+                NotificationCenter.default.post(name: .pomvoxDictionaryHintApplied, object: nil)
+            }
+            return
+        }
         let hint = dictionary.hint
         if cleanupEnabled, hint != cleanupHint {
             cleanupHint = hint
@@ -1088,6 +1216,12 @@ final class NativeEngine: ObservableObject {
         let doCleanup = cleanupEnabled
         let style = cleanupStyle
         let timeoutS = cleanupTimeoutS
+        let backend = cleanupBackendKind
+        let sdk = sdkHost
+        let reopenPermitted = memoryPolicy.permitsReopen(at: CFAbsoluteTimeGetCurrent())
+        // This utterance now owns insertion; anything still in flight is superseded.
+        utteranceTask?.cancel()
+        let utterance = utterances.begin()
         let store = history
         let dict = dictionary
         let sig = signature
@@ -1100,7 +1234,7 @@ final class NativeEngine: ObservableObject {
         // fallback when the model never loaded (e.g. a timeout before warm).
         let captureEval = EvalCaptureSetting().isOn
         let configuredCleanupModelID = cleanupModelID
-        Task { [weak self] in
+        utteranceTask = Task { [weak self] in
             guard let self else { return }
             // Stage timings mirror bench.py (t0 = key-up/auto-stop); they land
             // in history.timings_json with Python's keys.
@@ -1115,7 +1249,8 @@ final class NativeEngine: ObservableObject {
                 NSLog("pomvox-engine: finalize transcribe FAILED: %@", sttError!)
             }
             timings.stamp("stt_finalize")
-            NSLog("pomvox-engine: transcript = %@", raw.isEmpty ? "<empty>" : raw)
+            // Length only: dictated text never goes to the system log.
+            NSLog("pomvox-engine: transcript — %d chars", raw.count)
             var text = raw
             var cleanupStatus: CleanupStatus?
             // Cleanup OFF, or a whitespace-only transcript: nothing below runs.
@@ -1124,7 +1259,53 @@ final class NativeEngine: ObservableObject {
             // loop is already stopped (`finishing`), so the GPU pass never
             // overlaps STT on the ANE.
             var cleanupNotice: String?
-            if doCleanup, !isBlankTranscript(raw) {
+            if doCleanup, !isBlankTranscript(raw), backend == .sdk {
+                self.bus.post(.state("polishing", coldMark))
+                let outcome: SDKCleanupOutcome
+                if let sdk {
+                    do {
+                        outcome = try await runSDKCleanup(sdk, raw: raw, baseTimeoutS: timeoutS,
+                                                          reopenPermitted: reopenPermitted)
+                    } catch {
+                        // Cancelled or superseded: never converted into a raw paste.
+                        NSLog("pomvox-engine: utterance cancelled during cleanup — nothing inserted")
+                        return
+                    }
+                } else {
+                    outcome = SDKCleanupOutcome(
+                        original: raw, text: raw,
+                        kind: .configurationFailure("The cleanup SDK could not be set up."),
+                        result: nil, preparationWaitMS: nil)
+                }
+                // result.text for cleaned/unchanged; the original, byte for
+                // byte, for every fallback. The SDK already evaluated its
+                // output — no second acceptOutput pass here.
+                text = outcome.text
+                cleanupStatus = outcome.appStatus
+                timings.stamp("cleanup")
+                for (key, value) in outcome.timingNotes() { timings.note(key, value) }
+                switch outcome.kind {
+                case .cleaned, .unchanged:
+                    break
+                case .fallback(let reason):
+                    let codes = outcome.warnings.filter { $0.hasPrefix("rejectedBy:") }
+                    NSLog("pomvox-engine: cleanup fallback (%@%@) — original transcript",
+                          reason.rawValue, codes.isEmpty ? "" : ", " + codes.joined(separator: ","))
+                    // The pack was still downloading, installing or opening:
+                    // say so, as the in-app path does. The preparation keeps
+                    // running — this dictation only stopped waiting for it.
+                    if self.cleanupPhase != .ready {
+                        cleanupNotice = CleanupAvailability.dictationNotice(
+                            self.cleanupPhase, afterWaiting: true)
+                        if cleanupNotice != nil { cleanupStatus = .unavailable }
+                    }
+                case .configurationFailure(let message):
+                    NSLog("pomvox-engine: cleanup configuration failure — original transcript")
+                    self.cleanupProblem = message
+                    cleanupNotice = "cleanup unavailable (setup problem — see Settings)"
+                    cleanupStatus = .unavailable
+                }
+            } else if doCleanup, !isBlankTranscript(raw) {
                 let phase = self.cleanupPhase
                 if let notice = CleanupAvailability.dictationNotice(phase) {
                     // Model isn't ready and waiting out the 5 s budget would
@@ -1174,73 +1355,49 @@ final class NativeEngine: ObservableObject {
             // What the cleanup model produced (or fell back to), before the
             // dictionary and the dictation mark touch it — the eval pair.
             let cleanedForEval = text
-            // Spoken layout commands ("new line", "new paragraph", "bullet")
-            // become layout here, on the cleaned text AND on the raw fallback:
-            // the model renders them as words, and a timeout must not also
-            // eat them. Deterministic, so it is not part of the eval pair.
-            text = SpokenFormatting.apply(text)
-            // Custom-word fixups run last so a misheard proper noun is corrected
-            // whether cleanup polished the text, fell back to raw, or is off
-            // (mirrors app.py). `final_text` stored in history reflects them.
-            let applied = dict.applyReporting(text)
-            text = applied.text
-            // The dictation mark goes on last — after cleanup and after the
-            // custom-word fixups — so it decorates the finished text and can
-            // never become input the LLM or a replacement rule acts on. Stored
-            // in history as part of `final_text`, so a re-insert pastes exactly
-            // what was pasted the first time (`apply` is idempotent).
-            text = sig.apply(to: text)
-            let (appHint, pastedAt): (String?, Double?) = await MainActor.run {
-                guard !isBlankTranscript(text) else {
-                    let peak = peakDbfs(samples)
-                    let cause = classifyEmptyTranscript(
-                        raw: raw, peakDbfs: peak, sttError: sttError)
-                    NSLog("pomvox-engine: empty transcript — %@ (raw %d chars)",
-                          String(describing: cause), raw.count)
-                    if let msg = cause.hudMessage {
-                        self.bus.post(.result("error", msg))
-                    } else {
-                        self.bus.post(.result("empty", ""))
-                    }
-                    if let code = cause.errorCode {
-                        TelemetryClient.shared.emit(.error, props: self.errorProps(code))
-                    }
-                    self.doneMachine()
-                    self.status = .ready
-                    return (nil, nil)
+            let cleanupBoundaryText = text
+            // The host pipeline, exactly once and in order, on the main actor:
+            // spoken layout commands ("new line", "new paragraph", "bullet")
+            // become layout — on the cleaned text AND on the raw fallback, since
+            // the model renders them as words and a timeout must not also eat
+            // them; then the custom-word fixups, so a misheard proper noun is
+            // corrected whether cleanup polished the text, fell back to raw, or
+            // is off (mirrors app.py); then the dictation mark, last, so it
+            // decorates the finished text and never becomes input the LLM or a
+            // replacement rule acts on. `deliverUtterance` re-checks this
+            // utterance is still current after the transforms and immediately
+            // before the paste.
+            let notice = cleanupNotice
+            let delivered: (text: String, fired: [String], appHint: String?, pastedAt: Double?)? =
+                await MainActor.run {
+                    var fired: [String] = []
+                    var appHint: String?
+                    var pastedAt: Double?
+                    let delivery = deliverUtterance(
+                        cleanupBoundaryText, id: utterance, sessions: self.utterances,
+                        spokenFormatting: SpokenFormatting.apply,
+                        dictionary: { text in
+                            let applied = dict.applyReporting(text)
+                            fired = applied.fired
+                            return applied.text
+                        },
+                        signature: { sig.apply(to: $0) },
+                        insert: { text in
+                            (appHint, pastedAt) = self.insertFinal(
+                                text, raw: raw, samples: samples, sttError: sttError, t0: t0,
+                                cleanupNotice: notice)
+                        })
+                    guard case .inserted(let text) = delivery else { return nil }
+                    self.utterances.retire()
+                    return (text, fired, appHint, pastedAt)
                 }
-                // app_hint = whatever is frontmost when the paste lands.
-                let hint = NSWorkspace.shared.frontmostApplication?.localizedName
-                self.lastTranscript = text  // retained for recovery before the paste
-                let outcome = Paster.paste(text)
-                let pasteT = CFAbsoluteTimeGetCurrent()
-                self.lastPasteMs = (pasteT - t0) * 1000
-                var pastedAt: Double?
-                switch outcome {
-                case .pasted:
-                    pastedAt = pasteT
-                    if let cleanupNotice {
-                        // The raw words are in the focused field. Say why they
-                        // weren't cleaned — a silent paste was the bug.
-                        self.bus.post(.result("error", cleanupNotice))
-                    } else {
-                        self.bus.post(.result("ok", text))
-                    }
-                    NSLog("engine: paste %.0fms (%d chars)", self.lastPasteMs ?? 0, text.count)
-                case .copiedToClipboard:
-                    // No editable field had focus — the transcript is on the
-                    // clipboard, not lost. Tell the user via the HUD flash.
-                    if let cleanupNotice {
-                        self.bus.post(.result("error", "\(cleanupNotice) — copied to clipboard"))
-                    } else {
-                        self.bus.post(.result("error", "copied to clipboard"))
-                    }
-                    NSLog("engine: no focused field — left %d chars on the clipboard", text.count)
-                }
-                self.doneMachine()
-                self.status = .ready
-                return (hint, pastedAt)
+            guard let delivered else {
+                NSLog("pomvox-engine: utterance superseded — result discarded, nothing inserted")
+                return
             }
+            text = delivered.text
+            let applied = DictionaryApplied(text: text, fired: delivered.fired)
+            let (appHint, pastedAt) = (delivered.appHint, delivered.pastedAt)
             if !applied.fired.isEmpty {
                 DictionaryStatsStore.shared.record(applied.fired)
             }
@@ -1286,7 +1443,11 @@ final class NativeEngine: ObservableObject {
             if EvalRecord.shouldCapture(enabled: captureEval, raw: raw, pasted: text) {
                 let modelVersion: String
                 if doCleanup {
-                    modelVersion = await self.cleanup.loadedModel ?? configuredCleanupModelID
+                    if backend == .sdk {
+                        modelVersion = await sdk?.openedModelID ?? configuredCleanupModelID
+                    } else {
+                        modelVersion = await self.cleanup.loadedModel ?? configuredCleanupModelID
+                    }
                 } else {
                     modelVersion = "off"
                 }
@@ -1297,6 +1458,235 @@ final class NativeEngine: ObservableObject {
                     sttModel: sttModelTelemetryID, style: style,
                     appVersion: EvalRecord.appVersion()))
             }
+        }
+    }
+
+    // MARK: - utterance insertion
+
+    /// Paste the finished text (or report an empty transcript) and return the
+    /// frontmost app and paste time for history. Called only from
+    /// `deliverUtterance`'s `insert`, after its final currency check.
+    private func insertFinal(_ text: String, raw: String, samples: [Float], sttError: String?,
+                             t0: CFAbsoluteTime, cleanupNotice: String?) -> (String?, Double?) {
+        guard !isBlankTranscript(text) else {
+            let peak = peakDbfs(samples)
+            let cause = classifyEmptyTranscript(
+                raw: raw, peakDbfs: peak, sttError: sttError)
+            NSLog("pomvox-engine: empty transcript — %@ (raw %d chars)",
+                  String(describing: cause), raw.count)
+            if let msg = cause.hudMessage {
+                bus.post(.result("error", msg))
+            } else {
+                bus.post(.result("empty", ""))
+            }
+            if let code = cause.errorCode {
+                TelemetryClient.shared.emit(.error, props: errorProps(code))
+            }
+            doneMachine()
+            status = .ready
+            return (nil, nil)
+        }
+        // app_hint = whatever is frontmost when the paste lands.
+        let hint = NSWorkspace.shared.frontmostApplication?.localizedName
+        lastTranscript = text  // retained for recovery before the paste
+        let outcome = Paster.paste(text)
+        let pasteT = CFAbsoluteTimeGetCurrent()
+        lastPasteMs = (pasteT - t0) * 1000
+        var pastedAt: Double?
+        switch outcome {
+        case .pasted:
+            pastedAt = pasteT
+            if let cleanupNotice {
+                // The raw words are in the focused field. Say why they
+                // weren't cleaned — a silent paste was the bug.
+                bus.post(.result("error", cleanupNotice))
+            } else {
+                bus.post(.result("ok", text))
+            }
+            NSLog("engine: paste %.0fms (%d chars)", lastPasteMs ?? 0, text.count)
+        case .copiedToClipboard:
+            // No editable field had focus — the transcript is on the
+            // clipboard, not lost. Tell the user via the HUD flash.
+            if let cleanupNotice {
+                bus.post(.result("error", "\(cleanupNotice) — copied to clipboard"))
+            } else {
+                bus.post(.result("error", "copied to clipboard"))
+            }
+            NSLog("engine: no focused field — left %d chars on the clipboard", text.count)
+        }
+        doneMachine()
+        status = .ready
+        return (hint, pastedAt)
+    }
+
+    /// Retire the utterance that owns insertion (sleep, disarm, quit): its
+    /// cleanup waiter is cancelled and whatever it produces is discarded.
+    /// Shared preparation is untouched — other utterances may need it.
+    private func cancelUtterance(reason: String) {
+        guard utterances.current != nil else { return }
+        utterances.retire()
+        utteranceTask?.cancel()
+        utteranceTask = nil
+        NSLog("pomvox-engine: in-flight utterance cancelled (%@)", reason)
+    }
+
+    // MARK: - cleanup backend selection
+
+    /// `[cleanup] backend`, and the model it depends on, → the backend that
+    /// runs. Read at arm and on every settings save (`switchCleanupBackend`
+    /// retires the other backend's model when this changes while armed).
+    private func applyCleanupBackend(from doc: ConfigDocument, atArm: Bool = false) {
+        let kind = CleanupBackendKind.resolve(
+            configured: doc.string("cleanup", "backend"), modelID: cleanupModelID)
+        guard atArm || kind != cleanupBackendKind else { return }
+        if kind == .sdk, cleanupModelID != CleanupBackendKind.sdkModelID {
+            NSLog("pomvox-engine: [cleanup] model %@ is ignored by the SDK backend (serves %@)",
+                  cleanupModelID, CleanupBackendKind.sdkModelID)
+        }
+        cleanupBackendKind = kind
+        if kind == .sdk {
+            if sdkHost == nil { sdkHost = makeSDKHost() }
+            // Never silently accept settings the SDK baseline cannot honour.
+            if doc.string("cleanup", "style") != nil || doc.bool("cleanup", "speculative") != nil {
+                NSLog("pomvox-engine: [cleanup] style/speculative are ignored by the SDK backend "
+                      + "(frozen prompt, fixed decoder)")
+            }
+        }
+        cleanupControls = CleanupControls.forBackend(
+            kind, capabilities: kind == .sdk ? sdkCapabilities : [])
+        NSLog("pomvox-engine: cleanup backend = %@", kind.rawValue)
+    }
+
+    /// The backend changed while this process runs. Retire the old backend's
+    /// model before the new one prepares, so the two are never resident
+    /// together, and restart the residency watchdog (it is per-backend).
+    private func switchCleanupBackend(from previous: CleanupBackendKind) {
+        cleanupProblem = nil
+        cleanupPackSummary = nil
+        cleanupResidencyTask?.cancel(); cleanupResidencyTask = nil
+        cleanupLoadedAt = nil
+        cleanupAvailability = cleanupAvailability.applying(.engineRestarted)
+        let active = cleanupEnabled && isArmed
+        switch previous {
+        case .sdk:
+            let retired = disableSDKCleanup()
+            guard active else { return }
+            let host = sdkHost
+            Task { [weak self] in
+                await retired.value
+                _ = try? await host?.awaitRetirement()
+                self?.syncCleanupModel()
+            }
+        case .inapp:
+            cleanupLoadTask?.cancel(); cleanupLoadTask = nil
+            let unload = Task { [cleanup] in await cleanup.unload() }
+            guard active else { return }
+            Task { [weak self] in
+                await unload.value
+                await self?.enableSDKCleanup().value
+            }
+        }
+        if active { startCleanupResidencyWatchdog() }
+    }
+
+    /// Send enable (with the current dictionary vocabulary) to the SDK host,
+    /// after whatever was sent before it.
+    @discardableResult
+    private func enableSDKCleanup() -> Task<Void, Never> {
+        guard cleanupBackendKind == .sdk, let sdkHost else { return Task {} }
+        let vocabulary = SDKVocabulary.select(from: dictionary.cleanupWords)
+        if let line = vocabulary.omissionSummary { NSLog("%@", line) }
+        return enqueueSDKHostOp { await sdkHost.enable(vocabulary: vocabulary) }
+    }
+
+    /// Close the SDK cleaner (disarm, quit, toggle off, backend switch). The
+    /// next open waits for the retiring cleaner inside the host.
+    @discardableResult
+    private func disableSDKCleanup() -> Task<Void, Never> {
+        guard let sdkHost else { return Task {} }
+        return enqueueSDKHostOp { await sdkHost.disable() }
+    }
+
+    private func enqueueSDKHostOp(_ op: @escaping @Sendable () async -> Void) -> Task<Void, Never> {
+        let previous = sdkHostOp
+        let task = Task {
+            await previous?.value
+            await op()
+        }
+        sdkHostOp = task
+        return task
+    }
+
+    // MARK: - SDK cleanup backend
+
+    private func makeSDKHost() -> SDKCleanupHost? {
+        do {
+            let provisioner = try SDKPackProvisioner.bundled()
+            sdkCapabilities = provisioner.trustedManifest.capabilities
+            return SDKCleanupHost(provisioner: provisioner,
+                                  afterRelease: { MLXBufferPool.releaseCachedBuffers() },
+                                  onEvent: { [weak self] event in
+                Task { @MainActor in self?.onSDKEvent(event) }
+            })
+        } catch {
+            let message = (error as? LocalizedError)?.errorDescription ?? String(describing: error)
+            NSLog("pomvox-engine: cleanup SDK setup failed: %@", message)
+            cleanupProblem = message
+            return nil
+        }
+    }
+
+    /// The SDK host's preparation, expressed in the same availability states
+    /// the in-app engine reports, so the menu bar, Settings and the dictation
+    /// notice read one source whichever backend runs.
+    private func onSDKEvent(_ event: SDKCleanupHost.Event) {
+        guard cleanupBackendKind == .sdk else { return }
+        switch event {
+        case .preparing:
+            guard isArmed else { return }
+            cleanupAvailability = cleanupAvailability.applying(.loadStarted)
+        case .progress(let fraction):
+            guard isArmed else { return }
+            // Progress comes from the snapshot download; after it, the pack
+            // installs and opens (no progress), which is "loading".
+            if fraction < 1 {
+                cleanupAvailability = cleanupAvailability
+                    .applying(.downloadStarted).applying(.progress(fraction))
+            } else {
+                cleanupAvailability = cleanupAvailability
+                    .applying(.downloadFinished).applying(.loadStarted)
+            }
+        case .prepared(let preparation, let packID, let packVersion, let capabilities):
+            cleanupAvailability = cleanupAvailability.applying(.downloadFinished).applying(.loadFinished)
+            cleanupProblem = nil
+            cleanupPackSummary = "\(packID) \(packVersion) · rules \(SDKCleanupHost.rulesVersion)"
+            sdkCapabilities = capabilities
+            cleanupControls = CleanupControls.forBackend(.sdk, capabilities: capabilities)
+            guard isArmed else { return }
+            cleanupLoadedAt = CFAbsoluteTimeGetCurrent()
+            OnboardingWarm().markWarmed()
+            // Preparation, measured separately from any request.
+            var c = ColdStartTimings(); c.cleanupLoadMs = preparation.totalMS
+            emitColdStart(c)
+        case .failed(let message, let configuration):
+            let failure: CleanupFailure = cleanupAvailability.downloadInFlight
+                ? .download(message) : .load(message)
+            cleanupAvailability = cleanupAvailability.applying(.failed(failure))
+            if configuration { cleanupProblem = message }
+            guard isArmed else { return }
+            NSLog("pomvox-engine: cleanup preparation FAILED — dictation will paste the original transcript")
+            var p = TelemetryProps(); p.errorCode = "cleanup_load_failed"
+            TelemetryClient.shared.emit(.error, props: p)
+        case .evicted:
+            // A cancelled preparation may have been mid-download; the
+            // transfer itself carries on (SharedSnapshotFetch), so the next
+            // preparation joins it rather than starting over.
+            var next = cleanupAvailability
+            next.downloadInFlight = false
+            next.phase = (next.phase == .ready || next.phase == .loading) ? .onDisk : next.phase
+            if case .downloading = next.phase { next.phase = .notDownloaded }
+            cleanupAvailability = next
+            cleanupLoadedAt = nil
         }
     }
 
@@ -1405,6 +1795,7 @@ final class NativeEngine: ObservableObject {
     /// normally stop push-to-talk may never arrive. A no-op when already idle.
     private func panicReset(reason: String) {
         guard isArmed else { return }
+        cancelUtterance(reason: reason)
         machineLock.lock(); let recording = machine.state != .idle; machineLock.unlock()
         NSLog("pomvox-engine: sleep/wake reset (%@) — recording=%@",
               reason, recording ? "yes" : "no")

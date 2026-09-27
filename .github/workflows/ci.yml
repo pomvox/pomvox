@@ -44,7 +44,12 @@ jobs:
     runs-on: macos-15
     timeout-minutes: 90
     steps:
+      # submodules: the app's project.yml references vendor/pomvox-cleanup-engine
+      # as a local Swift package, so xcodegen rejects the spec outright
+      # ("Invalid local package") if the submodule directory is empty.
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
       # Pinned, not latest-stable. An Xcode after 26.3 fails the build with
       # "Multiple commands produce .../Debug/include/module.modulemap": the
@@ -162,6 +167,8 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
       - name: Select latest stable Xcode
         uses: maxim-lobanov/setup-xcode@v1
