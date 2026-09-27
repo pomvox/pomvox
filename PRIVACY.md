@@ -27,7 +27,9 @@ Pomvox writes only to your disk:
 
 Also on this Mac, not sent anywhere: `~/.pomvox/dictionary.toml` (your
 dictionary words and fixup rules), an optional log at `~/.pomvox/pomvox.log`,
-downloaded models under `~/.cache/huggingface/hub`, and (if you opted in)
+downloaded models under `~/.cache/huggingface/hub`, the installed cleanup pack
+under `~/Library/Application Support/Pomvox/CleanupPacks` (copy-on-write
+clones of those downloaded weights), and (if you opted in)
 an anonymous install ID in macOS UserDefaults. Erasing history leaves settings
 and models in place.
 

@@ -7,6 +7,63 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 
 ## [Unreleased]
 
+## [0.2.9] — 2026-09-27
+
+### Changed
+
+- **Cleanup now runs through the Pomvox cleanup engine, a separate, versioned
+  package.** On the default model (SimpleWords v3) the app installs a verified
+  cleanup pack once, under `~/Library/Application Support/Pomvox/CleanupPacks`,
+  as copy-on-write clones of the model you already downloaded, so the weights
+  aren't stored twice. Output matched the previous engine on 423 of 424 real
+  transcripts. On an M1 a warm cleanup takes about 0.45 s, and reopening after
+  macOS reclaimed the memory takes about 1.6 s. The engine that shipped through
+  0.2.8 is still there: `[cleanup] backend = "inapp"` in `config.toml`. Macs on
+  the compact model, and anyone who picked another model, stay on it
+  automatically.
+
+- **Settings says what cleanup is actually doing.** A status line under the
+  toggle shows whether the model is downloading, loading, ready or failed, and
+  why. A setup problem shows in its own row instead of only in the log. With the
+  new engine, Style reads "Fixed", because this pack has one prompt.
+
+- **Cleanup settings apply when you save.** Turning cleanup on or off, and
+  changing its model or engine, no longer needs the engine turned off and on
+  again.
+
+- **Very long dictations paste as spoken.** Anything over about 3,000 characters
+  skips cleanup rather than risk a shortened result.
+
+### Fixed
+
+- **Turning cleanup on could leave it never working, with no error.** On 8 GB
+  Macs in particular, the model download was cancelled by the "turn the engine
+  off and on" step, which left a lock file that made every later attempt wait
+  forever, and each dictation quietly pasted the raw transcript. Downloads now
+  run to completion on their own, whatever the engine does, and a dictation that
+  couldn't be cleaned says why in the on-screen HUD.
+
+- **Sleep, turning the engine off, or quitting mid-dictation no longer pastes
+  a late result.** An interrupted dictation is dropped instead of landing in
+  whatever window is focused afterwards.
+
+- **A whitespace-only transcript no longer pastes a blank** or gets counted as a
+  dictionary wipe.
+
+- **Dictionary import keeps commas and Windows line endings.** A replacement
+  containing a comma came back truncated, and Windows files added a stray
+  character to every word. Imports now also save once instead of once per row.
+
+- **Anonymous usage stats count the first launch after you opt in.** It used to
+  be dropped because it happened before the consent sheet was answered. Nothing
+  is sent or queued before you choose.
+
+### Privacy
+
+- The system log no longer contains your transcript text, only its length.
+
+- Added [PRIVACY.md](PRIVACY.md) and [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+
 ## [0.2.8] — 2026-09-13
 
 ### Changed
@@ -624,7 +681,8 @@ on Apple Silicon, shipping as a signed, notarized `Pomvox.dmg`.
 - **Python reference engine** (`src/pomvox/`) — the original app, now frozen as a
   runnable reference whose pure-logic modules are the cross-checked test spec.
 
-[Unreleased]: https://github.com/pomvox/pomvox/compare/v0.2.8...HEAD
+[Unreleased]: https://github.com/pomvox/pomvox/compare/v0.2.9...HEAD
+[0.2.9]: https://github.com/pomvox/pomvox/compare/v0.2.8...v0.2.9
 [0.2.8]: https://github.com/pomvox/pomvox/compare/v0.2.7...v0.2.8
 [0.2.7]: https://github.com/pomvox/pomvox/compare/v0.2.6...v0.2.7
 [0.2.6]: https://github.com/pomvox/pomvox/compare/v0.2.5...v0.2.6
