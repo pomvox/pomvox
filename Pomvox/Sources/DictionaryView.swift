@@ -19,6 +19,7 @@ struct DictionaryView: View {
                 }
             }
             if let err = store.parseError { parseErrorBanner(err) }
+            if !store.featureEnabled { disabledBanner }
             ScrollView {
                 VStack(alignment: .leading, spacing: 28) {
                     wordsSection
@@ -37,6 +38,7 @@ struct DictionaryView: View {
             .receive(on: RunLoop.main)) { _ in
             stats = DictionaryStatsStore.shared.allStats()
         }
+        .onAppear { store.refreshFeatureEnabled() }
     }
 
     // MARK: - Sections
@@ -100,14 +102,18 @@ struct DictionaryView: View {
     private var testSection: some View {
         VStack(alignment: .leading, spacing: 10) {
             sectionHeader("Try it",
-                          subtitle: "Type anything (or paste a transcript) and watch the rules apply.")
+                          subtitle: store.featureEnabled
+                              ? "Type anything (or paste a transcript) and watch the rules apply."
+                              : "Dictionary is off, so this shows the text unchanged — the same as dictation.")
             TextField("say something pomvox would mishear…", text: $testText, axis: .vertical)
                 .textFieldStyle(.plain).font(Typo.ui(13))
                 .padding(10)
                 .background(RoundedRectangle(cornerRadius: 8).fill(Palette.pane2))
                 .overlay(RoundedRectangle(cornerRadius: 8).stroke(Palette.hair, lineWidth: 0.5))
             if !testText.isEmpty {
-                let applied = PomvoxDictionary(file: store.file).applyReporting(testText)
+                let applied = PomvoxDictionary(
+                    file: store.file, enabled: store.featureEnabled
+                ).applyReporting(testText)
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
                     Image(systemName: "arrow.turn.down.right")
                         .font(.system(size: 11)).foregroundStyle(Palette.ember)
@@ -116,6 +122,10 @@ struct DictionaryView: View {
                 }
                 if !applied.fired.isEmpty {
                     Text("\(applied.fired.count) rule\(applied.fired.count == 1 ? "" : "s") fired")
+                        .font(Typo.ui(11)).foregroundStyle(Palette.muted)
+                }
+                if !store.featureEnabled {
+                    Text("Not applied — dictionary is off, so this is what dictation will paste.")
                         .font(Typo.ui(11)).foregroundStyle(Palette.muted)
                 }
             }
@@ -156,6 +166,18 @@ struct DictionaryView: View {
                 : DictionaryInterchange.rulesCSV(store.file.rules)
             try? text.write(to: url, atomically: true, encoding: .utf8)
         }
+    }
+
+    private var disabledBanner: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.system(size: 13)).foregroundStyle(Palette.ember)
+            Text("Dictionary is off — `[dictionary] enabled = false` in config.toml. Words and rules stay saved, but dictation won’t use them until you turn it back on.")
+                .font(Typo.ui(12.5)).foregroundStyle(Palette.ink)
+            Spacer()
+        }
+        .padding(.horizontal, 34).padding(.vertical, 11)
+        .background(Palette.emberSoft)
     }
 
     private func parseErrorBanner(_ err: String) -> some View {

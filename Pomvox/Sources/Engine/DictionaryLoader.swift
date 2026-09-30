@@ -33,6 +33,16 @@ struct DictionaryLoadResult: Equatable {
 /// the one-time legacy→file migration write — this loader never writes).
 enum DictionaryLoader {
 
+    /// `[dictionary] enabled` in config.toml. A missing key or a missing file
+    /// means on — the engine and the Dictionary page must agree on that default.
+    static func isEnabled(_ doc: ConfigDocument) -> Bool {
+        doc.bool("dictionary", "enabled") ?? true
+    }
+
+    static func isEnabled(configPath: String) -> Bool {
+        isEnabled(ConfigDocument.load(path: configPath))
+    }
+
     static func load(configPath: String, dictionaryPath: String) -> DictionaryLoadResult {
         if let text = try? String(contentsOfFile: dictionaryPath, encoding: .utf8) {
             do {

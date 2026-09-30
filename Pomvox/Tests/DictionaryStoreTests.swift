@@ -16,6 +16,15 @@ final class DictionaryStoreTests: XCTestCase {
         try? FileManager.default.removeItem(at: dir)
     }
 
+    func testFeatureEnabledFollowsConfig() throws {
+        try "[dictionary]\nenabled = false\n".write(toFile: cfgPath, atomically: true, encoding: .utf8)
+        let store = DictionaryStore(path: dictPath, configPath: cfgPath)
+        XCTAssertFalse(store.featureEnabled)
+        try "[dictionary]\nenabled = true\n".write(toFile: cfgPath, atomically: true, encoding: .utf8)
+        store.refreshFeatureEnabled()
+        XCTAssertTrue(store.featureEnabled)
+    }
+
     func testMigratesLegacyConfigOnFirstLoad() throws {
         try """
         [dictionary]

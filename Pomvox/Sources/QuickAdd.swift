@@ -103,7 +103,7 @@ final class QuickAddController {
 
     private func makePanel() -> QuickAddPanel {
         let p = QuickAddPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 380, height: 150),
+            contentRect: NSRect(x: 0, y: 0, width: 380, height: 196),
             styleMask: [.nonactivatingPanel, .titled, .closable, .fullSizeContentView],
             backing: .buffered, defer: false)
         p.titleVisibility = .hidden
@@ -131,6 +131,11 @@ private struct QuickAddView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("Add to Pomvox dictionary").font(Typo.ui(13, .semibold)).foregroundStyle(Palette.ink)
+            if !store.featureEnabled {
+                Text("Dictionary is off in config.toml. This will be saved, but it won’t change dictation until you turn it back on.")
+                    .font(Typo.ui(11)).foregroundStyle(Palette.ember)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             TextField("Word or phrase (how it should be written)", text: $word)
                 .textFieldStyle(.roundedBorder).font(Typo.ui(13))
                 .focused($wordFocused)
@@ -148,7 +153,10 @@ private struct QuickAddView: View {
             }
         }
         .padding(16)
-        .onAppear { wordFocused = true }
+        .onAppear {
+            store.refreshFeatureEnabled()
+            wordFocused = true
+        }
         .onExitCommand(perform: close)
     }
 
