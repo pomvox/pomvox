@@ -21,7 +21,6 @@ enum NavItem: String, CaseIterable, Identifiable {
 
 struct RootView: View {
     @EnvironmentObject var model: HubModel
-    @EnvironmentObject var telemetry: TelemetryModel
     @EnvironmentObject var lowMemCleanup: LowMemoryCleanupModel
     // Fresh installs land on Setup: Pomvox does nothing until Microphone,
     // Input Monitoring, and Accessibility are granted, and a first-time user
@@ -29,7 +28,6 @@ struct RootView: View {
     // window creation; the user is free to navigate away afterward.
     @State private var selection: NavItem = .firstRun(
         allPermissionsGranted: Permissions.allGranted())
-    @State private var showConsent = false
     @State private var showLowMemCleanup = false
 
     var body: some View {
@@ -52,27 +50,17 @@ struct RootView: View {
         .onReceive(NotificationCenter.default.publisher(for: .pomvoxShowSetup)) { _ in
             selection = .setup
         }
-        // One-time telemetry choice screen (Share / No thanks). Shows on the
-        // first manual open of the Hub; a login-item launch suppresses the
-        // window, so it defers to the next time the window appears — and the
-        // `maySend` gate means nothing sends until the user has chosen "Share".
+        // The one-time low-memory cleanup prompt (item 7). Shows on the first
+        // manual open of the Hub; a login-item launch suppresses the window, so
+        // it defers to the next time the window appears.
         .onAppear { presentFirstRunSheets() }
-        .sheet(isPresented: $showConsent, onDismiss: presentFirstRunSheets) {
-            TelemetryConsentSheet().environmentObject(telemetry)
-        }
-        // The low-memory cleanup prompt (item 7) shows after the consent choice
-        // so the two one-time sheets never fight over presentation.
         .sheet(isPresented: $showLowMemCleanup) {
             LowMemoryCleanupSheet().environmentObject(lowMemCleanup)
         }
     }
 
-    /// Present the one-time first-run sheets in order: telemetry consent first,
-    /// then (once that's resolved) the low-memory cleanup prompt if it applies.
     private func presentFirstRunSheets() {
-        if telemetry.needsConsentPrompt {
-            showConsent = true
-        } else if lowMemCleanup.needsPrompt {
+        if lowMemCleanup.needsPrompt {
             showLowMemCleanup = true
         }
     }

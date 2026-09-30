@@ -1,7 +1,7 @@
 import XCTest
 @testable import Pomvox
 
-/// Opt-in, anonymous usage telemetry (native app only). The brief's hard rule —
+/// On-by-default, anonymous usage telemetry (native app only). The brief's hard rule —
 /// "never send transcripts, audio, file paths, emails, or any free text" — is
 /// enforced *structurally* (a typed scalar props allowlist) and pinned here:
 /// every prop is validated-or-dropped, the JSON body carries only allowlisted
@@ -35,16 +35,16 @@ final class TelemetryTests: XCTestCase {
         XCTAssertEqual(b.installID(), id)
     }
 
-    func testConsentDefaultsUndecided() {
+    func testConsentDefaultsGranted() {
         let store = TelemetryStore(defaults: freshDefaults())
-        XCTAssertEqual(store.consent, .undecided, "no choice made yet on a fresh install")
-        XCTAssertFalse(store.maySend, "nothing sends until the user chooses to share")
+        XCTAssertEqual(store.consent, .granted, "sharing is on by default on a fresh install")
+        XCTAssertTrue(store.maySend)
     }
 
     func testMaySendOnlyWhenGranted() {
         let defaults = freshDefaults()
         var store = TelemetryStore(defaults: defaults)
-        XCTAssertFalse(store.maySend, "undecided → no send")
+        XCTAssertTrue(store.maySend, "default → sends")
 
         store.consent = .denied
         XCTAssertFalse(store.maySend, "denied → no send")
@@ -61,15 +61,21 @@ final class TelemetryTests: XCTestCase {
         XCTAssertEqual(b.consent, .granted)
     }
 
-    func testExistingInstallReadsAsUndecided() {
-        // Migration: an install carrying only the old on-by-default keys has no
-        // `telemetry.consent`, so it reads as undecided and is re-asked.
+    func testExplicitDenialPersists() {
         let defaults = freshDefaults()
-        defaults.set(true, forKey: "telemetry.enabled")        // legacy key
-        defaults.set(true, forKey: "telemetry.consentPrompted") // legacy key
-        let store = TelemetryStore(defaults: defaults)
-        XCTAssertEqual(store.consent, .undecided)
-        XCTAssertFalse(store.maySend)
+        var a = TelemetryStore(defaults: defaults)
+        a.consent = .denied
+        let b = TelemetryStore(defaults: defaults)
+        XCTAssertEqual(b.consent, .denied, "an explicit opt-out survives relaunch")
+        XCTAssertFalse(b.maySend)
+    }
+
+    func testUnknownStoredValueReadsAsGranted() {
+        // Installs that never answered the old first-run screen have no key or a
+        // retired value; both fall back to the default.
+        let defaults = freshDefaults()
+        defaults.set("undecided", forKey: TelemetryStore.consentKey)
+        XCTAssertEqual(TelemetryStore(defaults: defaults).consent, .granted)
     }
 
     // MARK: - prop sanitization (validate-or-drop; never reject the batch)
@@ -546,9 +552,9 @@ final class TelemetryTests: XCTestCase {
     }
 
     func testAppLaunchSkippedBeforeConsentIsSentOnceOnGrant() async {
-        // arm() emits app_launch while the first-run sheet is still undecided.
-        // The event must not hit disk then, and must be recorded exactly once
-        // when the user opts in — not replayed on a second grant.
+        // arm() emits app_launch while sharing is turned off. The event must not
+        // hit disk then, and must be recorded exactly once when the user turns
+        // it back on — not replayed on a second grant.
         let gate = EnabledBox(false)
         let spy = SenderSpy(), persist = PersistSpy()
         let client = makeClient(enabled: { gate.value }, endpoint: URL(string: "https://x")!,
@@ -558,7 +564,7 @@ final class TelemetryTests: XCTestCase {
         XCTAssertTrue(persist.snapshots.isEmpty, "nothing is buffered before consent")
 
         await client.releaseSkippedAppLaunch()
-        XCTAssertTrue(persist.snapshots.isEmpty, "still undecided → the flag stays set")
+        XCTAssertTrue(persist.snapshots.isEmpty, "still denied → the flag stays set")
 
         gate.value = true
         await client.releaseSkippedAppLaunch()
