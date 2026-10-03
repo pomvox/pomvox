@@ -1,12 +1,11 @@
 import Foundation
 
-/// Anonymous, content-free usage telemetry, gated on an explicit choice — **native
-/// app only** (the Python reference engine stays no-network). On first launch the
-/// user picks "Share anonymous stats" or "No thanks"; nothing sends unless they
-/// choose to share. The product's promise is unchanged for the things that
-/// matter: voice and transcripts never leave this Mac. What *can* leave — only
-/// once the user has granted — is a handful of counters: a random per-install
-/// UUID and a constrained allowlist of scalars.
+/// Anonymous, content-free usage telemetry — **native app only** (the Python
+/// reference engine stays no-network). On by default; the user can turn it off
+/// anytime in Settings → Privacy, and nothing sends once they do. The product's
+/// promise is unchanged for the things that matter: voice and transcripts never
+/// leave this Mac. What *can* leave is a handful of counters: a random
+/// per-install UUID and a constrained allowlist of scalars.
 ///
 /// The "no content ever" rule is enforced *structurally*, not by discipline:
 /// `TelemetryProps` is a fixed set of typed scalars (there is no free-text field
@@ -24,10 +23,10 @@ import Foundation
 /// The user's choice and the anonymous install id. UserDefaults is the right
 /// home: this is native-app state, not shared `config.toml` (which the Python
 /// engine reads and must never learn about telemetry).
-/// The user's explicit choice about telemetry. `.undecided` until they answer
-/// the first-run choice screen; nothing sends unless it is `.granted`.
+/// The user's telemetry setting. `.granted` unless they turn it off in
+/// Settings → Privacy; nothing sends while it is `.denied`.
 enum TelemetryConsent: String {
-    case undecided, granted, denied
+    case granted, denied
 }
 
 struct TelemetryStore {
@@ -37,19 +36,17 @@ struct TelemetryStore {
     let defaults: UserDefaults
     init(defaults: UserDefaults = .standard) { self.defaults = defaults }
 
-    /// The user's explicit tri-state choice, set by the first-run choice screen
-    /// ("Share anonymous stats" / "No thanks") or Settings → Privacy. Default
-    /// `.undecided`. Existing installs have no key, so they read as `.undecided`
-    /// and are shown the choice screen again — the migration off the earlier
-    /// default-on behavior.
+    /// Set from Settings → Privacy. Defaults to `.granted` when no value is
+    /// stored (fresh installs, and installs that never answered the old
+    /// first-run choice screen). An explicit `.denied` is always honored.
     var consent: TelemetryConsent {
-        get { TelemetryConsent(rawValue: defaults.string(forKey: Self.consentKey) ?? "") ?? .undecided }
+        get { TelemetryConsent(rawValue: defaults.string(forKey: Self.consentKey) ?? "") ?? .granted }
         set { defaults.set(newValue.rawValue, forKey: Self.consentKey) }
     }
 
-    /// The send-gate: only an explicit `.granted` sends. `.undecided` and
-    /// `.denied` never send — and nothing is even queued while not granted, so no
-    /// buffered event can leak after a later choice.
+    /// The send-gate: only `.granted` sends. `.denied` never sends — and nothing
+    /// is even queued while denied, so no buffered event can leak after a later
+    /// change.
     var maySend: Bool { consent == .granted }
 
     /// A random UUID v4, generated once and stable for the life of the install.
@@ -389,9 +386,9 @@ actor TelemetryClient {
     private let sender: Sender
     private let persist: @Sendable ([TelemetryEvent]) -> Void
     private var flushTask: Task<Void, Never>?
-    /// `app_launch` arrived before consent. A flag only — the event itself is
-    /// not queued or written to disk, so an undecided or denied session still
-    /// holds nothing that could leak. Granting consent emits one fresh launch.
+    /// `app_launch` arrived while consent was off. A flag only — the event itself
+    /// is not queued or written to disk, so a denied session still holds nothing
+    /// that could leak. Turning consent back on emits one fresh launch.
     private var skippedAppLaunch = false
 
     /// `persist` is called with the full pending queue after every change, so a
@@ -439,7 +436,7 @@ actor TelemetryClient {
     }
 
     /// Drop everything pending, on disk included. Called when consent is
-    /// withdrawn: events queued while granted must not outlive a "No thanks".
+    /// withdrawn: events queued while granted must not outlive turning it off.
     func forget() {
         queue.removeAll()
         persist(queue.events)
@@ -448,18 +445,17 @@ actor TelemetryClient {
     /// Fire-and-forget entry from any context. Never blocks the caller. The
     /// gate drops the event when consent isn't granted or no endpoint is set.
     /// `app_launch` is remembered as a flag in that case and emitted later if
-    /// the user opts in (`releaseSkippedAppLaunch`).
+    /// the user turns sharing back on (`releaseSkippedAppLaunch`).
     nonisolated func emit(_ name: TelemetryEventName, props: TelemetryProps = TelemetryProps()) {
         Task { await self.ingest(name: name, props: props) }
     }
 
     private func ingest(name: TelemetryEventName, props: TelemetryProps) {
-        // Don't buffer the event unless consent is granted — so an `.undecided`
-        // or `.denied` session never accumulates payloads that could leak on a
-        // later "Share". (flush() re-checks too, as defense in depth.)
-        // arm() emits `app_launch` before a new user has answered the consent
-        // sheet. Remember that it happened (a flag, not the event) so
-        // `releaseSkippedAppLaunch` can emit a fresh one after they opt in.
+        // Don't buffer the event unless consent is granted — so a `.denied`
+        // session never accumulates payloads that could leak if the user later
+        // turns sharing back on. (flush() re-checks too, as defense in depth.)
+        // Remember a skipped `app_launch` (a flag, not the event) so
+        // `releaseSkippedAppLaunch` can emit a fresh one if they re-enable it.
         guard isEnabled() else {
             if name == .appLaunch { skippedAppLaunch = true }
             return

@@ -13,9 +13,8 @@ cleanup pass runs a local LLM on the GPU — by default
 a dictation-cleanup fine-tune built for this app. **Your voice and transcripts
 never leave your machine.** The only network calls are the one-time model download
 from Hugging Face, a once-a-day check for app updates (on by default, off
-anytime in Settings → General), and — if you choose to share them on first
-launch — anonymous, content-free usage stats (change anytime in
-Settings → Privacy).
+anytime in Settings → General), and anonymous, content-free usage stats (on
+by default, off anytime in Settings → Privacy).
 
 <p align="center">
   <img src="docs/design/hub-real-home.png" width="820"
@@ -190,13 +189,11 @@ The only network calls Pomvox ever makes are:
    install only when you click **Update**, and every download must pass
    EdDSA signature verification and Apple's notarization checks before a
    byte of it is trusted.
-3. **Anonymous usage stats — your explicit choice.** Nothing is sent until you
-   explicitly choose on first launch: a one-time screen offers two equal buttons
-   — **Share anonymous stats** or **No thanks** — with no default and no
-   pre-checked box, and a `maySend` gate holds all sending until you pick. Change
-   your mind anytime in **Settings → Privacy**.
+3. **Anonymous usage stats — on by default.** Turn it off anytime in
+   **Settings → Privacy**; a `maySend` gate stops all sending immediately and
+   drops anything still queued.
 
-If you choose to share, Pomvox sends a random per-install ID (anonymous) plus
+While it's on, Pomvox sends a random per-install ID (anonymous) plus
 content-free counters: app/OS version, that a dictation happened with its
 duration, which models ran, whether cleanup was used, and enum-only error codes.
 It **never** sends audio, transcripts, cleaned text, file paths, or any free

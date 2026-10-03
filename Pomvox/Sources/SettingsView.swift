@@ -634,7 +634,7 @@ private struct PrivacyPane: View {
             }
             SettingsGroup("Anonymous usage stats") {
                 SettingRow(title: "Send anonymous usage stats",
-                           desc: "Your choice, set on first launch. Anonymous usage events only — your voice and transcripts never leave this Mac. Toggle it either way, anytime.") {
+                           desc: "On by default. Anonymous usage events only — your voice and transcripts never leave this Mac. Turn it off anytime.") {
                     SettingToggle(isOn: telemetry.binding, label: "Send anonymous usage stats")
                 }
                 RowDivider()

@@ -48,7 +48,8 @@ audio or transcripts.
    when you click **Update**; that download also comes from GitHub Releases
    and must pass EdDSA signature verification and Apple notarization before
    anything is trusted.
-3. **Anonymous usage stats** — only if you choose to share. See below.
+3. **Anonymous usage stats** — on by default. Turn it off in
+   **Settings → Privacy**. See below.
 
 The Python reference engine has no telemetry and no updater. Loading its
 speech or cleanup model still talks to Hugging Face if the weights are not
@@ -60,12 +61,12 @@ email, or account with them.
 
 ## Anonymous usage stats
 
-Nothing is sent until you pick **Share anonymous stats** on first launch.
-There is no default and no pre-checked box. A `maySend` gate holds all sending
-until that choice is `.granted`. Change it later in **Settings → Privacy**.
-Turning it off drops anything still queued.
+Anonymous usage stats are on by default. Turn them off anytime in
+**Settings → Privacy**; a `maySend` gate then stops all sending immediately,
+and anything still queued is dropped. If you turned it off in an earlier
+version, that choice is kept.
 
-If you share, events go to Pomvox's own ingest service on Google Cloud Run:
+While on, events go to Pomvox's own ingest service on Google Cloud Run:
 `https://murmur-ingest-w5tvsus5ia-uc.a.run.app`. There is no third-party
 analytics SDK. Events are queued as they happen (launch, a finished
 dictation, and similar) and flushed about two seconds later, in batches.
@@ -99,8 +100,8 @@ There is no free-text field. The encoder in
 
 ## What we don't do
 
-No accounts. No ads. No selling or sharing your data. The stats payload, if
-you opt in, is the only usage data Pomvox ever sends, and it cannot carry
+No accounts. No ads. No selling or sharing your data. The stats payload, unless
+you turn it off, is the only usage data Pomvox ever sends, and it cannot carry
 your voice or your words.
 
 ## Contact
