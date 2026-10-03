@@ -1,5 +1,35 @@
 # Gaps found integrating the cleanup engine SDK into Pomvox
 
+> **Status, 2026-10-03.** Every gap below is now tracked in
+> [`pomvox/pomvox-cleanup-engine`](https://github.com/pomvox/pomvox-cleanup-engine).
+> "Shipped" means listed in that repository's `CHANGELOG.md` for the named
+> release. The rest of this document is the original finding, unchanged.
+>
+> | Gap | Finding | Engine issue | Status |
+> | --- | --- | --- | --- |
+> | 1 | No installation path | [#12](https://github.com/pomvox/pomvox-cleanup-engine/issues/12) (list and remove, follow-up) | Shipped in 0.1.0-beta.1 (`PackInstaller`) |
+> | 2 | Vocabulary outside the cached prefix | — | Shipped in 0.1.0-beta.1 |
+> | 3 | No eviction API | — | Shipped in 0.1.0-beta.1 |
+> | 4 | Cancel/timeout quarantines the cleaner | — | Shipped in 0.1.0-beta.1 |
+> | 4b | A rejection reports nothing | — | Shipped in 0.1.0-beta.1 |
+> | 4c | Spoken lists never survive | [#5](https://github.com/pomvox/pomvox-cleanup-engine/issues/5) | Open |
+> | 4d | First dictation pays the whole open | none yet | Open |
+> | 5 | Output capped at 1,024 tokens | [#13](https://github.com/pomvox/pomvox-cleanup-engine/issues/13) | Open |
+> | 6 | Vocabulary limits below a real dictionary | [#14](https://github.com/pomvox/pomvox-cleanup-engine/issues/14) | Open |
+> | 7 | No load/warmup split, no decoder statistics | — | Shipped in 0.1.0-beta.1 |
+> | 8 | `Memory.clearCache()` before every request | — | Shipped in 0.1.0-beta.1 |
+> | 9 | `Runtime/MLX` cannot be consumed remotely | — | Shipped in 0.1.0-beta.2 (`pomvox-cleanup-mlx`) |
+> | 10 | Two copies of the guards | [#7](https://github.com/pomvox/pomvox-cleanup-engine/issues/7) | Open |
+> | 11 | Style and speculative settings silently inert | [#6](https://github.com/pomvox/pomvox-cleanup-engine/issues/6) | Open |
+> | 12 | No auxiliary-generation API | [#3](https://github.com/pomvox/pomvox-cleanup-engine/issues/3) | Open |
+>
+> Engine issues not tied to a gap here:
+> [#2](https://github.com/pomvox/pomvox-cleanup-engine/issues/2) compact pack
+> for ≤ 8 GB Macs and #3 are the blockers for
+> [pomvox/pomvox#173](https://github.com/pomvox/pomvox/issues/173);
+> [#4](https://github.com/pomvox/pomvox-cleanup-engine/issues/4) moves the
+> app's deadline budget upstream; #8 to #11 are the stable-release gates.
+
 Findings from building `feat/cleanup-engine-sdk` — the Pomvox app running its
 dictation cleanup through `pomvox-cleanup-engine` at `00bd4d8` — and testing it
 against the in-app engine it was extracted from.
