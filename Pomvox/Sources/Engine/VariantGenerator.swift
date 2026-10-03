@@ -65,17 +65,39 @@ enum VariantGenerator {
     }
 }
 
+/// Drop a leading list marker, and nothing else.
+///
+/// Bullets (`-`, `*`, `•`) and numbering (`2.` / `1)`) are markers. A digit
+/// that is part of the variant — "3 d printing", "3d printing" — is not, and
+/// stripping it used to turn those into "d printing".
+func stripVariantListPrefix(_ line: String) -> String {
+    var t = line.trimmingCharacters(in: .whitespaces)
+    let bullets: Set<Character> = ["-", "*", "•"]
+    if let first = t.first, bullets.contains(first) {
+        while let c = t.first, bullets.contains(c) { t.removeFirst() }
+        while t.first == " " { t.removeFirst() }
+    }
+    var index = t.startIndex
+    var sawDigit = false
+    while index < t.endIndex, t[index].isNumber {
+        sawDigit = true
+        t.formIndex(after: &index)
+    }
+    if sawDigit, index < t.endIndex, t[index] == "." || t[index] == ")" {
+        t.formIndex(after: &index)
+        while index < t.endIndex, t[index] == " " { t.formIndex(after: &index) }
+        return String(t[index...])
+    }
+    return t
+}
+
 /// Clean an LLM "list the mishearings" response into chip-ready variants:
 /// strip bullets/numbering, lowercase, drop echoes of the term itself, drop
 /// anything over 5 words (explanatory prose, not a variant), dedupe, cap at 6.
 func parseVariantLines(_ raw: String, term: String) -> [String] {
     var out: [String] = []
     for line in raw.components(separatedBy: "\n") {
-        var t = line.trimmingCharacters(in: .whitespaces)
-        while let first = t.first, "-*•0123456789. )".contains(first) {
-            t.removeFirst()
-        }
-        t = t.trimmingCharacters(in: .whitespaces).lowercased()
+        let t = stripVariantListPrefix(line).trimmingCharacters(in: .whitespaces).lowercased()
         guard !t.isEmpty,
               t.caseInsensitiveCompare(term) != .orderedSame,
               t.components(separatedBy: " ").count <= 5,

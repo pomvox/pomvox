@@ -22,4 +22,13 @@ final class VariantParsingTests: XCTestCase {
         let raw = (1...10).map { "variant \($0)" }.joined(separator: "\n")
         XCTAssertEqual(parseVariantLines(raw, term: "X").count, 6)
     }
+
+    func testKeepsDigitLeadingVariants() {
+        XCTAssertEqual(
+            parseVariantLines("3 d printing\n3d printing\n", term: "additive"),
+            ["3 d printing", "3d printing"])
+        XCTAssertEqual(
+            parseVariantLines("- 3d printing\n2. palm vox\n1) one more\n", term: "X"),
+            ["3d printing", "palm vox", "one more"])
+    }
 }
