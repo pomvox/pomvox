@@ -83,6 +83,15 @@ final class DictionaryLoaderTests: XCTestCase {
             NSString(string: "~/.pomvox/dictionary-stats.json").expandingTildeInPath)
     }
 
+    func testEnabledDefaultsOnAndReadsTheFlag() throws {
+        let missing = dir.appendingPathComponent("none.toml").path
+        XCTAssertTrue(DictionaryLoader.isEnabled(configPath: missing))
+        let on = try write("on.toml", "[dictionary]\nenabled = true\n")
+        XCTAssertTrue(DictionaryLoader.isEnabled(configPath: on))
+        let off = try write("off.toml", "[dictionary]\nenabled = false\n")
+        XCTAssertFalse(DictionaryLoader.isEnabled(configPath: off))
+    }
+
     func testBothMissingIsEmpty() {
         let r = DictionaryLoader.load(configPath: dir.appendingPathComponent("a.toml").path,
                                       dictionaryPath: dir.appendingPathComponent("b.toml").path)

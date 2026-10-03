@@ -22,6 +22,9 @@ final class DictionaryStore: ObservableObject {
 
     @Published private(set) var file = DictionaryFile()
     @Published private(set) var parseError: String?
+    /// `[dictionary] enabled` in config.toml. The page and quick-add read this
+    /// so they don't preview rules the engine will ignore.
+    @Published private(set) var featureEnabled = true
     /// True from a words-affecting save until the engine posts
     /// `.pomvoxDictionaryHintApplied` (the "applying…" chip on the page).
     @Published private(set) var applyingHint = false
@@ -52,6 +55,13 @@ final class DictionaryStore: ObservableObject {
                 self.reloadFromDisk()
             }
         }
+        // The flag lives in config.toml, which Settings saves without touching
+        // dictionary.toml. Re-read it whenever that file changes.
+        NotificationCenter.default.addObserver(
+            forName: .pomvoxSettingsDidChange, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.refreshFeatureEnabled() }
+        }
         reloadFromDisk()
         migrateLegacyIfNeeded()
     }
@@ -60,6 +70,14 @@ final class DictionaryStore: ObservableObject {
         let r = DictionaryLoader.load(configPath: configPath, dictionaryPath: path)
         parseError = r.parseError
         if r.parseError == nil { file = r.file }
+        refreshFeatureEnabled()
+    }
+
+    /// Re-read `[dictionary] enabled`. Called on appear too, so a hand-edit of
+    /// config.toml shows up the next time the page or quick-add opens.
+    func refreshFeatureEnabled() {
+        let next = DictionaryLoader.isEnabled(configPath: configPath)
+        if next != featureEnabled { featureEnabled = next }
     }
 
     /// First run with no dictionary.toml: persist the legacy section so the

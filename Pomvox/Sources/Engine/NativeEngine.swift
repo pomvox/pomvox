@@ -992,7 +992,7 @@ final class NativeEngine: ObservableObject {
         historyEnabled = doc.bool("history", "enabled") ?? true
         historyRetentionDays = doc.int("history", "retention_days") ?? 7
 
-        let dictEnabled = doc.bool("dictionary", "enabled") ?? true
+        let dictEnabled = DictionaryLoader.isEnabled(doc)
         let loaded = DictionaryLoader.load(
             configPath: configPath,
             dictionaryPath: DictionaryPaths.dictionaryPath())
@@ -1029,7 +1029,7 @@ final class NativeEngine: ObservableObject {
     /// uncached (slower that one time, never stale).
     func reloadDictionary() {
         let doc = ConfigDocument.load(path: configPath)
-        let dictEnabled = doc.bool("dictionary", "enabled") ?? true
+        let dictEnabled = DictionaryLoader.isEnabled(doc)
         let loaded = DictionaryLoader.load(
             configPath: configPath,
             dictionaryPath: DictionaryPaths.dictionaryPath())
