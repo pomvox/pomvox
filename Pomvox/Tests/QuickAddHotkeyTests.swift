@@ -36,4 +36,21 @@ final class QuickAddHotkeyTests: XCTestCase {
     func testCaseAndWhitespaceInsensitive() {
         XCTAssertNotNil(QuickAddHotkey.parse(" CMD + Shift + D "))
     }
+
+    func testInlineErrorNamesTheActualProblem() {
+        XCTAssertNil(QuickAddHotkey.inlineError(for: ""))
+        XCTAssertNil(QuickAddHotkey.inlineError(for: "cmd+shift+d"))
+        XCTAssertEqual(
+            QuickAddHotkey.inlineError(for: "d"),
+            "Needs at least one modifier (e.g. cmd+shift+d).")
+        XCTAssertEqual(
+            QuickAddHotkey.inlineError(for: "cmd+µ"),
+            "Unknown key. Use a letter or digit (e.g. cmd+shift+d).")
+        XCTAssertEqual(
+            QuickAddHotkey.inlineError(for: "cmd+"),
+            "Unknown key. Use a letter or digit (e.g. cmd+shift+d).")
+        XCTAssertEqual(
+            QuickAddHotkey.inlineError(for: "foo+d"),
+            "Unknown modifier. Use cmd, shift, alt, or ctrl.")
+    }
 }

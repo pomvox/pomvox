@@ -930,10 +930,7 @@ private struct ModelField: View {
 /// is exactly what would be silently disabled at launch.
 private struct QuickAddHotkeyField: View {
     @Binding var value: String
-    private var error: String? {
-        guard !value.isEmpty, QuickAddHotkey.parse(value) == nil else { return nil }
-        return "Needs at least one modifier (e.g. cmd+shift+d)."
-    }
+    private var error: String? { QuickAddHotkey.inlineError(for: value) }
     var body: some View {
         VStack(alignment: .trailing, spacing: 5) {
             TextField("cmd+shift+d", text: $value)

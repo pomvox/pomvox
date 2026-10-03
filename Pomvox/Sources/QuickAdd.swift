@@ -24,18 +24,54 @@ enum QuickAddHotkey {
         "8": 28, "9": 25, "0": 29,
     ]
 
+    /// Why a non-empty chord is unusable. A blank binding is not an error —
+    /// it means quick-add is off.
+    enum Problem: Equatable {
+        case needsModifier
+        case unknownModifier
+        case unknownKey
+    }
+
     static func parse(_ s: String) -> (flags: NSEvent.ModifierFlags, keyCode: UInt16)? {
+        guard case let .chord(flags, keyCode) = inspect(s) else { return nil }
+        return (flags, keyCode)
+    }
+
+    /// The Settings field's inline message. Nil when the field is empty or valid.
+    static func inlineError(for s: String) -> String? {
+        switch inspect(s) {
+        case .blank, .chord:
+            return nil
+        case .problem(.needsModifier):
+            return "Needs at least one modifier (e.g. cmd+shift+d)."
+        case .problem(.unknownModifier):
+            return "Unknown modifier. Use cmd, shift, alt, or ctrl."
+        case .problem(.unknownKey):
+            return "Unknown key. Use a letter or digit (e.g. cmd+shift+d)."
+        }
+    }
+
+    private enum Inspect {
+        case blank
+        case chord(NSEvent.ModifierFlags, UInt16)
+        case problem(Problem)
+    }
+
+    private static func inspect(_ s: String) -> Inspect {
+        if s.trimmingCharacters(in: .whitespaces).isEmpty { return .blank }
         let parts = s.lowercased().components(separatedBy: "+")
             .map { $0.trimmingCharacters(in: .whitespaces) }
-        guard parts.count >= 2, let keyName = parts.last,
-              let keyCode = keycodes[keyName] else { return nil }
+        guard parts.count >= 2 else { return .problem(.needsModifier) }
+        guard let keyName = parts.last, let keyCode = keycodes[keyName] else {
+            return .problem(.unknownKey)
+        }
         var flags: NSEvent.ModifierFlags = []
         for mod in parts.dropLast() {
-            guard let f = modifiers[mod] else { return nil }
+            guard let f = modifiers[mod] else { return .problem(.unknownModifier) }
             flags.insert(f)
         }
-        guard !flags.isEmpty else { return nil }
-        return (flags, keyCode)
+        guard !flags.isEmpty else { return .problem(.needsModifier) }
+        return .chord(flags, keyCode)
     }
 
     static func matches(_ event: NSEvent,
