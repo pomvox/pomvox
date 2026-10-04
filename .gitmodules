@@ -1,3 +1,0 @@
-[submodule "vendor/pomvox-cleanup-engine"]
-	path = vendor/pomvox-cleanup-engine
-	url = https://github.com/pomvox/pomvox-cleanup-engine.git
