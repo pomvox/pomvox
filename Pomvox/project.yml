@@ -45,15 +45,15 @@ packages:
     url: https://github.com/DePasqualeOrg/swift-tokenizers.git
     minVersion: "0.5.0"
     maxVersion: "0.6.0"
-  # Cleanup SDK (branch feat/cleanup-engine-sdk): the external
-  # pomvox-cleanup-engine package, vendored as a submodule. Its optional MLX
-  # runtime depends on the package root by relative path (`../..`), so it can
-  # only be consumed as a local checkout — hence the submodule rather than a
-  # version pin. Its own dependency pins are exact (mlx-swift-lm 3.31.4,
-  # mlx-swift 0.31.4, swift-tokenizers-mlx 0.3.0, swift-tokenizers 0.5.0) and
-  # fall inside the ranges above, so one resolution serves both.
+  # Cleanup SDK: the external engine's MLX runtime, pinned exact so the engine
+  # version is a contract visible in the diff. It pulls pomvox-cleanup-engine
+  # (the core SDK) at the same exact version. Its own dependency pins are exact
+  # (mlx-swift-lm 3.31.4, mlx-swift 0.31.4, swift-tokenizers-mlx 0.3.0,
+  # swift-tokenizers 0.5.0) and fall inside the ranges above, so one resolution
+  # serves both. Bumping it: docs/cleanup-engine-sdk-integration.md.
   PomvoxCleanupMLX:
-    path: ../vendor/pomvox-cleanup-engine/Runtime/MLX
+    url: https://github.com/pomvox/pomvox-cleanup-mlx.git
+    exactVersion: "0.1.0-beta.2"
   # In-app updates (M8): Sparkle 2 headless — SPUUpdater + a custom user
   # driver; all UI is native (see docs/superpowers/specs/2026-07-09-in-app-updates-design.md).
   Sparkle:
@@ -96,7 +96,7 @@ targets:
     platform: macOS
     sources:
       - path: Sources
-      # The cleanup SDK's pack manifest, copied verbatim from the submodule.
+      # The cleanup SDK's pack manifest, copied verbatim from the engine repo.
       # Its exact bytes are the manifest digest the SDK records in provenance,
       # so it is bundled as a resource, never re-serialized.
       - path: Resources

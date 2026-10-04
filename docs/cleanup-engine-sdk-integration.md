@@ -19,18 +19,20 @@ This is a developer-preview integration, not a release. See
 
 ## SDK checkout
 
-The SDK is consumed as the `vendor/pomvox-cleanup-engine` submodule through Xcode
-(`Runtime/MLX` as a local package in `Pomvox/project.yml`), so MLX's Metal
-resources are packaged into the app. Remote SwiftPM is **not** supported: the MLX
-runtime depends on its package root by relative path.
+The SDK is consumed as the remote package
+[`pomvox-cleanup-mlx`](https://github.com/pomvox/pomvox-cleanup-mlx), pinned
+`exactVersion: "0.1.0-beta.2"` in `Pomvox/project.yml` (product
+`PomvoxCleanupMLX`). It pulls the core `pomvox-cleanup-engine` SDK at the same
+exact version, so no submodule or local checkout is needed. It is added through
+Xcode (XcodeGen), not a plain `swift build`, so MLX's Metal resources are packaged
+into the app.
 
-The host needs `PackInstaller`, `PackSource.validated`, `Cleaner.closeAndWait()`
-and `RuntimeFactory.mlx(vocabulary:)`. **No SDK commit contains them yet** —
-`00bd4d8`, the submodule pin, does not. Development uses the SDK's updated
-*working tree*, uncommitted, byte-identical to the maintainer's checkout (69 files
-compared by SHA-256; 14 modified, 11 untracked, including `PackInstaller.swift`).
-The submodule pointer stays at `00bd4d8` and shows as dirty. Pin a containing
-commit once one exists; do not substitute an older revision — it will not compile.
+**How to bump the engine.** Change the `exactVersion` of `PomvoxCleanupMLX` in
+`Pomvox/project.yml` to the new engine tag, run `xcodegen generate` and
+`scripts/check-package-pins.sh`, then run the full `xcodebuild test` (check the
+executed-test count is non-zero) and do one on-device dictation through the SDK
+backend on the built app. Open the PR titled `chore(cleanup): engine vX.Y.Z`.
+Behaviour changes land in the engine first; this repo only moves the pin.
 
 ```sh
 export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
@@ -187,7 +189,5 @@ dictations are not safe to clean with this baseline yet.
 ## Release gates still open
 
 See the PR description for measured results. Still owed before any release:
-an SDK commit containing these APIs (then re-pin), a live-microphone dictation
-pass and soak in the running app, real memory-pressure and sleep/wake on device,
-the private-corpus quality comparison, and CI (which cannot build this until the
-submodule points at a pushed commit containing the APIs).
+a live-microphone dictation pass and soak in the running app, real memory-pressure and sleep/wake on device,
+and the private-corpus quality comparison.
