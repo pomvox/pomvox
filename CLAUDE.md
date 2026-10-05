@@ -78,7 +78,7 @@ over adjectives: measure on the reference machine (M1, 16 GB).
 | `Pomvox/Sources/Engine/CleanupEngine.swift` and siblings: `CleanupLogic`, `SpeculativeDecoder`, `PromptLookupDrafter`, `CleanupGenStats`, `CleanupPromptProfile`, `CleanupBackendKind` | frozen, to be deleted | pomvox/pomvox#173, engine-only cleanup. In-app cleanup bugs are won't-fix here; file against the engine. |
 | `src/pomvox/cleanup.py` | frozen | pomvox/pomvox#105: the Python engine has no prompt-profile seam. Its cleanup vectors go when #173 lands. |
 | `src/pomvox/` | reference engine, frozen | The executable spec and acceptance oracle. Do not add features or "clean it up" (vault: `10 Architecture/Legacy Python Engine.md`). |
-| `vendor/` | going away | pomvox/pomvox#172: the submodule is replaced by `pomvox-cleanup-mlx` as a remote package pinned `exact:`. |
+| `PomvoxCleanupMLX` pin in `Pomvox/project.yml` | pinned package | The engine is `pomvox-cleanup-mlx` (which pins `pomvox-cleanup-engine`) as a remote package pinned `exact:`. Change it only as a bump titled `chore(cleanup): engine vX.Y.Z`; `scripts/check-cleanup-pack-manifest.sh` must pass. |
 | `~/.pomvox/history.db` schema | frozen at `user_version = 1` | Half of the cross-engine contract; a schema change is a cross-engine migration PR (vault: `Checklist - Config and Settings.md`). |
 
 ## Where the lessons are

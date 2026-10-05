@@ -58,7 +58,8 @@ enum SDKPackError: Error, Equatable, LocalizedError {
 struct SDKPackProvisioner: SDKPackProvisioning {
     /// SHA-256 of `Resources/simplewords-v3.pack.json`, identical to the SDK's
     /// `packs/simplewords-v3/pack.json` (`scripts/check-cleanup-pack-manifest.sh`
-    /// compares the two at the repo level; tests never read the submodule).
+    /// fetches the engine's copy at the pinned tag and compares the two in CI;
+    /// tests never read the engine package's checkout).
     static let bundledManifestSHA256 =
         "b18de5147868b8f24b706eeee065236926471ea3156aa69670ec43fa5f15059e"
     static let bundledResourceName = "simplewords-v3.pack"
