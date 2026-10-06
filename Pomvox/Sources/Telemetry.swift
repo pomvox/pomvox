@@ -2,7 +2,8 @@ import Foundation
 
 /// Anonymous, content-free usage telemetry — **native app only** (the Python
 /// reference engine stays no-network). On by default; the user can turn it off
-/// anytime in Settings → Privacy, and nothing sends once they do. The product's
+/// anytime in Settings → Privacy, and nothing sends once they do. Nothing sends
+/// before the one-time Home banner has disclosed it, either. The product's
 /// promise is unchanged for the things that matter: voice and transcripts never
 /// leave this Mac. What *can* leave is a handful of counters: a random
 /// per-install UUID and a constrained allowlist of scalars.
@@ -12,7 +13,7 @@ import Foundation
 /// to misuse), and `TelemetryEncoder` runs every prop through `TelemetrySanitizer`
 /// at the wire boundary — a model id is reduced to its basename, anything that
 /// can't match the contract's regex/enum is dropped. Sending is gated on
-/// `maySend` (consent == .granted) AND a configured endpoint,
+/// `maySend` (consent == .granted && disclosed) AND a configured endpoint,
 /// batched, fire-and-forget, and never on the dictation latency path.
 ///
 /// Pure logic (store, sanitizer, encoder, queue, gate, env) is unit-tested in
@@ -31,6 +32,7 @@ enum TelemetryConsent: String {
 
 struct TelemetryStore {
     static let consentKey = "telemetry.consent"
+    static let disclosedKey = "telemetry.disclosed"
     static let installIDKey = "telemetry.installID"
 
     let defaults: UserDefaults
@@ -44,10 +46,29 @@ struct TelemetryStore {
         set { defaults.set(newValue.rawValue, forKey: Self.consentKey) }
     }
 
-    /// The send-gate: only `.granted` sends. `.denied` never sends — and nothing
-    /// is even queued while denied, so no buffered event can leak after a later
-    /// change.
-    var maySend: Bool { consent == .granted }
+    /// Whether the user has been told stats are on. Set once the Home banner
+    /// has rendered, or when they turn sharing on in Settings → Privacy (which
+    /// shows the full disclosure). A stored `.granted` also counts: before
+    /// on-by-default it could only come from the old first-run sheet's "Share"
+    /// or the Privacy toggle, both of which disclosed. A missing key — a fresh
+    /// install, or an upgrade that never answered the sheet — is not disclosed.
+    var disclosed: Bool {
+        get {
+            defaults.bool(forKey: Self.disclosedKey)
+                || defaults.string(forKey: Self.consentKey) == TelemetryConsent.granted.rawValue
+        }
+        set { defaults.set(newValue, forKey: Self.disclosedKey) }
+    }
+
+    /// The send-gate: `.granted` and disclosed. `.denied` never sends, and an
+    /// undisclosed install sends nothing until the banner has rendered — and
+    /// nothing is even queued while the gate is shut, so no buffered event can
+    /// leak after a later change.
+    var maySend: Bool { consent == .granted && disclosed }
+
+    /// The one-time Home banner is owed: sharing is on but the user has not
+    /// been told. A stored `.denied` never sees it.
+    var needsDisclosure: Bool { consent == .granted && !disclosed }
 
     /// A random UUID v4, generated once and stable for the life of the install.
     /// Anonymous — it ties events from one machine together, nothing more.
@@ -386,9 +407,10 @@ actor TelemetryClient {
     private let sender: Sender
     private let persist: @Sendable ([TelemetryEvent]) -> Void
     private var flushTask: Task<Void, Never>?
-    /// `app_launch` arrived while consent was off. A flag only — the event itself
-    /// is not queued or written to disk, so a denied session still holds nothing
-    /// that could leak. Turning consent back on emits one fresh launch.
+    /// `app_launch` arrived while the gate was shut (denied, or not yet
+    /// disclosed). A flag only — the event itself is not queued or written to
+    /// disk, so such a session still holds nothing that could leak. Opening the
+    /// gate (the banner rendering, or turning sharing on) emits one fresh launch.
     private var skippedAppLaunch = false
 
     /// `persist` is called with the full pending queue after every change, so a
@@ -451,11 +473,12 @@ actor TelemetryClient {
     }
 
     private func ingest(name: TelemetryEventName, props: TelemetryProps) {
-        // Don't buffer the event unless consent is granted — so a `.denied`
-        // session never accumulates payloads that could leak if the user later
-        // turns sharing back on. (flush() re-checks too, as defense in depth.)
-        // Remember a skipped `app_launch` (a flag, not the event) so
-        // `releaseSkippedAppLaunch` can emit a fresh one if they re-enable it.
+        // Don't buffer the event unless the gate is open — so a `.denied` or
+        // not-yet-disclosed session never accumulates payloads that could leak
+        // later. (flush() re-checks too, as defense in depth.) arm() emits
+        // `app_launch` before the Home banner can render on a fresh install;
+        // remember it (a flag, not the event) so `releaseSkippedAppLaunch` can
+        // emit a fresh one once the gate opens.
         guard isEnabled() else {
             if name == .appLaunch { skippedAppLaunch = true }
             return
@@ -470,7 +493,8 @@ actor TelemetryClient {
         ingest(name: name, props: props)
     }
 
-    /// After consent flips to granted: if this process tried to record
+    /// After the gate opens (disclosure rendered, or consent flipped to
+    /// granted): if this process tried to record
     /// `app_launch` while it could not send, record one now. A no-op when
     /// nothing was skipped, or when consent is still off (the flag stays set).
     func releaseSkippedAppLaunch() {
@@ -506,6 +530,9 @@ actor TelemetryClient {
                 persist(queue.events)
                 continue   // unencodable or over the 64 KB limit → drop this batch
             }
+            // Counts only — the log line is the evidence that nothing flushed
+            // before the disclosure banner rendered.
+            NSLog("pomvox-telemetry: flush — POST %d event(s)", batch.count)
             switch await sender(endpoint, data) {
             case .success, .permanentFailure:
                 persist(queue.events)

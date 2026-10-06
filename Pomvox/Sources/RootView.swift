@@ -29,6 +29,9 @@ struct RootView: View {
     @State private var selection: NavItem = .firstRun(
         allPermissionsGranted: Permissions.allGranted())
     @State private var showLowMemCleanup = false
+    /// The tab Settings opens on. The disclosure banner's button deep-links to
+    /// Privacy; any other way into Settings starts on General, as before.
+    @State private var settingsTab: SettingsTab = .general
 
     var body: some View {
         NavigationSplitView {
@@ -50,6 +53,9 @@ struct RootView: View {
         .onReceive(NotificationCenter.default.publisher(for: .pomvoxShowSetup)) { _ in
             selection = .setup
         }
+        .onChange(of: selection) { _, new in
+            if new != .settings { settingsTab = .general }
+        }
         // The one-time low-memory cleanup prompt (item 7). Shows on the first
         // manual open of the Hub; a login-item launch suppresses the window, so
         // it defers to the next time the window appears.
@@ -67,10 +73,11 @@ struct RootView: View {
 
     @ViewBuilder private var detail: some View {
         switch selection {
-        case .home:       HomeView(goToHistory: { selection = .history })
+        case .home:       HomeView(goToHistory: { selection = .history },
+                                   goToPrivacy: { settingsTab = .privacy; selection = .settings })
         case .history:    HistoryView()
         case .dictionary: DictionaryView()
-        case .settings:   SettingsView()
+        case .settings:   SettingsView(initialTab: settingsTab)
         case .setup:      SetupView()
         }
     }

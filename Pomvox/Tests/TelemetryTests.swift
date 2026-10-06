@@ -38,13 +38,17 @@ final class TelemetryTests: XCTestCase {
     func testConsentDefaultsGranted() {
         let store = TelemetryStore(defaults: freshDefaults())
         XCTAssertEqual(store.consent, .granted, "sharing is on by default on a fresh install")
-        XCTAssertTrue(store.maySend)
+        XCTAssertFalse(store.maySend, "but nothing sends until the banner has disclosed it")
+        XCTAssertTrue(store.needsDisclosure)
     }
 
-    func testMaySendOnlyWhenGranted() {
+    func testMaySendOnlyWhenGrantedAndDisclosed() {
         let defaults = freshDefaults()
         var store = TelemetryStore(defaults: defaults)
-        XCTAssertTrue(store.maySend, "default → sends")
+        XCTAssertFalse(store.maySend, "default, undisclosed → no send")
+
+        store.disclosed = true
+        XCTAssertTrue(store.maySend, "default, disclosed → sends")
 
         store.consent = .denied
         XCTAssertFalse(store.maySend, "denied → no send")
@@ -596,5 +600,140 @@ final class TelemetryTests: XCTestCase {
         await client.ingestNow(.appLaunch)
         await client.releaseSkippedAppLaunch()
         XCTAssertEqual(persist.latest.map(\.event), [.appLaunch])
+    }
+
+    // MARK: - disclosure gate (ADR: on by default, disclosed before the first send)
+
+    /// A fresh suite, by name, so a `@Sendable` gate closure can reopen it.
+    private func freshSuite() -> String {
+        let name = "telemetry.tests." + UUID().uuidString
+        UserDefaults(suiteName: name)!.removePersistentDomain(forName: name)
+        return name
+    }
+
+    /// The production wiring with the network swapped out: the client reads
+    /// the real `maySend` from the suite on every ingest and flush.
+    private func gatedClient(suite: String, spy: SenderSpy) -> TelemetryClient {
+        TelemetryClient(endpoint: URL(string: "https://x")!,
+                        enabled: { TelemetryStore(defaults: UserDefaults(suiteName: suite)!).maySend },
+                        env: env, now: { 1_730_000_000_000 }, sender: spy.send)
+    }
+
+    private func sentEvents(_ spy: SenderSpy) -> [String] {
+        spy.bodies.flatMap { body -> [String] in
+            let json = try? JSONSerialization.jsonObject(with: body) as? [String: Any]
+            let events = json?["events"] as? [[String: Any]] ?? []
+            return events.compactMap { $0["event"] as? String }
+        }
+    }
+
+    /// `disclosureRendered` replays the skipped launch on a Task; wait for it.
+    private func flushUntilSent(_ client: TelemetryClient, _ spy: SenderSpy) async {
+        for _ in 0..<50 where spy.bodies.isEmpty {
+            await client.flush()
+            if spy.bodies.isEmpty { try? await Task.sleep(nanoseconds: 20_000_000) }
+        }
+    }
+
+    @MainActor
+    func testFreshInstallSendsNothingUntilTheBannerRenders() async {
+        let suite = freshSuite(), spy = SenderSpy()
+        let client = gatedClient(suite: suite, spy: spy)
+        let model = TelemetryModel(store: TelemetryStore(defaults: UserDefaults(suiteName: suite)!),
+                                   client: client)
+        XCTAssertTrue(model.showsDisclosureBanner, "a fresh install owes the banner")
+
+        // arm() and a first dictation, both before Home has rendered.
+        await client.ingestNow(.appLaunch)
+        await client.ingestNow(.dictationCompleted)
+        await client.flush()
+        XCTAssertTrue(spy.bodies.isEmpty, "nothing is sent before the banner renders")
+
+        model.disclosureRendered()
+        XCTAssertTrue(UserDefaults(suiteName: suite)!.bool(forKey: TelemetryStore.disclosedKey))
+        await flushUntilSent(client, spy)
+        XCTAssertEqual(sentEvents(spy), ["app_launch"],
+                       "after it renders, the skipped launch sends; pre-banner events were never queued")
+
+        await client.ingestNow(.dictationCompleted)
+        await client.flush()
+        XCTAssertEqual(sentEvents(spy), ["app_launch", "dictation_completed"], "and later events send")
+
+        let nextLaunch = TelemetryModel(store: TelemetryStore(defaults: UserDefaults(suiteName: suite)!),
+                                        client: client)
+        XCTAssertFalse(nextLaunch.showsDisclosureBanner, "the banner is one-time")
+    }
+
+    @MainActor
+    func testStoredDenialNeverSendsAndNeverSeesTheBanner() async {
+        let suite = freshSuite(), spy = SenderSpy()
+        UserDefaults(suiteName: suite)!.set("denied", forKey: TelemetryStore.consentKey)
+        let client = gatedClient(suite: suite, spy: spy)
+        let model = TelemetryModel(store: TelemetryStore(defaults: UserDefaults(suiteName: suite)!),
+                                   client: client)
+        XCTAssertEqual(model.consent, .denied, "a no from an earlier version stays a no")
+        XCTAssertFalse(model.showsDisclosureBanner, "a denied install is never shown the banner")
+
+        await client.ingestNow(.appLaunch)
+        await client.ingestNow(.dictationCompleted)
+        await client.releaseSkippedAppLaunch()
+        await client.flush()
+        XCTAssertTrue(spy.bodies.isEmpty, "a stored denial never sends")
+    }
+
+    func testStoredDenialStaysShutEvenIfDisclosed() {
+        // An install that was told and then said no is still a no.
+        let defaults = freshDefaults()
+        defaults.set("denied", forKey: TelemetryStore.consentKey)
+        defaults.set(true, forKey: TelemetryStore.disclosedKey)
+        let store = TelemetryStore(defaults: defaults)
+        XCTAssertFalse(store.maySend)
+        XCTAssertFalse(store.needsDisclosure)
+    }
+
+    @MainActor
+    func testNeverAnsweredUpgradeSeesTheBannerThenSends() async {
+        // An install from before #171 that dismissed or never saw the old
+        // sheet: legacy v0.1.3 keys and/or a retired `undecided` value.
+        let suite = freshSuite(), spy = SenderSpy()
+        let defaults = UserDefaults(suiteName: suite)!
+        defaults.set(true, forKey: "telemetry.enabled")
+        defaults.set(true, forKey: "telemetry.consentPrompted")
+        defaults.set("undecided", forKey: TelemetryStore.consentKey)
+        let client = gatedClient(suite: suite, spy: spy)
+        let model = TelemetryModel(store: TelemetryStore(defaults: defaults), client: client)
+        XCTAssertEqual(model.consent, .granted)
+        XCTAssertTrue(model.showsDisclosureBanner, "told, not just flipped")
+
+        await client.ingestNow(.appLaunch)
+        await client.flush()
+        XCTAssertTrue(spy.bodies.isEmpty, "nothing sends before the banner on upgrade either")
+
+        model.disclosureRendered()
+        await flushUntilSent(client, spy)
+        XCTAssertEqual(sentEvents(spy), ["app_launch"])
+        XCTAssertFalse(TelemetryModel(store: TelemetryStore(defaults: defaults), client: client)
+            .showsDisclosureBanner, "once")
+    }
+
+    func testOldSheetGrantCountsAsDisclosed() {
+        // "Share anonymous stats" on the old first-run sheet was a disclosure.
+        let defaults = freshDefaults()
+        defaults.set("granted", forKey: TelemetryStore.consentKey)
+        let store = TelemetryStore(defaults: defaults)
+        XCTAssertTrue(store.maySend)
+        XCTAssertFalse(store.needsDisclosure)
+    }
+
+    @MainActor
+    func testGrantingInPrivacyDisclosesAndHidesTheBanner() {
+        let suite = freshSuite()
+        let defaults = UserDefaults(suiteName: suite)!
+        defaults.set("denied", forKey: TelemetryStore.consentKey)
+        let model = TelemetryModel(store: TelemetryStore(defaults: defaults),
+                                   client: gatedClient(suite: suite, spy: SenderSpy()))
+        model.choose(.granted)
+        XCTAssertTrue(TelemetryStore(defaults: defaults).maySend)
+        XCTAssertFalse(model.showsDisclosureBanner)
     }
 }

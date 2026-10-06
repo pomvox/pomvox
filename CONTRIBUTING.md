@@ -8,12 +8,13 @@ pieces fit), and [SPEC.md](SPEC.md) (where the project is going).
 
 1. **Local-first is the product.** Your voice and transcripts never leave the
    machine — that is non-negotiable. The only network calls are the model
-   download from Hugging Face and anonymous, content-free usage stats the user
-   explicitly opts into via a first-run choice screen (native app only; the
-   Python engine stays no-network) — nothing sends unless they pick "Share" (the
-   `maySend` gate = `consent == .granted`). Any new network feature must clear
-   that same bar: anonymous, no content, an explicit choice, and clearly
-   disclosed in-app.
+   download from Hugging Face, the update check, and anonymous, content-free
+   usage stats (native app only; the Python engine stays no-network). Stats are
+   on by default, but nothing sends until a one-time Home banner has disclosed
+   them (the `maySend` gate = `consent == .granted && disclosed`), and a stored
+   opt-out is honored forever. Any new network feature must clear that same
+   bar: anonymous, content-free, easy to turn off, and disclosed in-app before
+   anything sends.
 2. **Models are config, not constants.** Anything model-shaped (STT model,
    cleanup model, prompts' tunables, deadlines) must be reachable from
    `~/.pomvox/config.toml`. Hard-coding a model id outside `config.py`

@@ -6,7 +6,11 @@ import SwiftUI
 /// write; the Python engine's watcher applies them within ~1 s.
 struct SettingsView: View {
     @EnvironmentObject var model: SettingsModel
-    @State private var tab: SettingsTab = .general
+    @State private var tab: SettingsTab
+
+    init(initialTab: SettingsTab = .general) {
+        _tab = State(initialValue: initialTab)
+    }
 
     var body: some View {
         VStack(spacing: 0) {

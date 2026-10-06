@@ -48,8 +48,9 @@ audio or transcripts.
    when you click **Update**; that download also comes from GitHub Releases
    and must pass EdDSA signature verification and Apple notarization before
    anything is trusted.
-3. **Anonymous usage stats** — on by default. Turn it off in
-   **Settings → Privacy**. See below.
+3. **Anonymous usage stats** — on by default, and only after a one-time
+   notice on Home has told you. Turn it off in **Settings → Privacy**. See
+   below.
 
 The Python reference engine has no telemetry and no updater. Loading its
 speech or cleanup model still talks to Hugging Face if the weights are not
@@ -61,10 +62,23 @@ email, or account with them.
 
 ## Anonymous usage stats
 
-Anonymous usage stats are on by default. Turn them off anytime in
-**Settings → Privacy**; a `maySend` gate then stops all sending immediately,
-and anything still queued is dropped. If you turned it off in an earlier
-version, that choice is kept.
+Anonymous usage stats are on by default. Nothing is sent, or even queued,
+until a one-time banner on Home has shown you: "Pomvox sends anonymous usage
+stats. Nothing you say. Turn off in Settings → Privacy." If you upgraded from a
+version that asked and you never answered, you see the same banner once before
+anything sends. Turn stats off anytime in **Settings → Privacy**; a `maySend`
+gate then stops all sending immediately, and anything still queued is dropped.
+If you turned it off in an earlier version, that choice is kept and you are
+never shown the banner.
+
+Stats are on by default everywhere, including the EU, UK and EEA. The random
+install ID is a persistent identifier, which GDPR can treat as personal data,
+and EU ePrivacy rules generally expect consent before non-essential analytics.
+We have decided to accept that risk at Pomvox's current scale, on the strength
+of a payload that has no field for content, the notice before the first send,
+and a one-click off switch. If installs grow or anyone raises a complaint, the
+named fallback is to make stats ask first in the EU, UK and EEA, keyed on your
+Mac's region setting.
 
 While on, events go to Pomvox's own ingest service on Google Cloud Run:
 `https://murmur-ingest-w5tvsus5ia-uc.a.run.app`. There is no third-party

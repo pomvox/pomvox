@@ -3,6 +3,7 @@ import SwiftUI
 struct HomeView: View {
     @EnvironmentObject var model: HubModel
     var goToHistory: () -> Void = {}
+    var goToPrivacy: () -> Void = {}
 
     var body: some View {
         VStack(spacing: 0) {
@@ -12,6 +13,7 @@ struct HomeView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
                     UpdateBanner().padding(.bottom, 20)
+                    TelemetryDisclosureBanner(openPrivacy: goToPrivacy).padding(.bottom, 20)
                     greeting.padding(.bottom, 26)
 
                     if model.rows.isEmpty {

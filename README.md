@@ -189,7 +189,8 @@ The only network calls Pomvox ever makes are:
    install only when you click **Update**, and every download must pass
    EdDSA signature verification and Apple's notarization checks before a
    byte of it is trusted.
-3. **Anonymous usage stats — on by default.** Turn it off anytime in
+3. **Anonymous usage stats — on by default.** Nothing sends until a one-time
+   banner on Home has told you so. Turn it off anytime in
    **Settings → Privacy**; a `maySend` gate stops all sending immediately and
    drops anything still queued.
 

@@ -7,6 +7,12 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 
 ## [Unreleased]
 
+### Changed
+
+- Anonymous usage stats are now on by default, shown to you once in a banner
+  on Home before anything is sent, and you can turn them off anytime in
+  Settings → Privacy.
+
 ## [0.2.9] — 2026-09-27
 
 ### Changed
