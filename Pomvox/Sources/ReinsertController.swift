@@ -20,16 +20,41 @@ final class ReinsertController: ObservableObject {
     enum Phase: Equatable {
         case idle
         case countdown(Int)   // seconds left before the synthesized paste
-        case copied           // copy-only fallback: prompt the user to paste
+        case waiting(copyOnly: Bool) // clipboard owned by an earlier operation; cancellable
+        case copied(needsAccessibility: Bool)  // no paste event posted
+        case pasteUnverified                  // event posted; check before pasting again
+
+        static func afterPaste(_ outcome: PasteOutcome) -> Phase {
+            switch outcome {
+            case .pasted: return .idle
+            case .copiedToClipboard: return .copied(needsAccessibility: false)
+            case .pasteUnverified: return .pasteUnverified
+            }
+        }
     }
 
     @Published private(set) var phase: Phase = .idle
 
     private var task: Task<Void, Never>?
+    private var generation = UUID()
+    private let prepareRequest: @MainActor () async -> Paster.Request?
+    private let copyText: @MainActor (String, Paster.Request) -> Void
+
+    init(prepareRequest: @escaping @MainActor () async -> Paster.Request? = { await Paster.prepare() },
+         copyText: @escaping @MainActor (String, Paster.Request) -> Void = { Paster.copy($0, request: $1) }) {
+        self.prepareRequest = prepareRequest
+        self.copyText = copyText
+    }
 
     /// Re-insert `text`. Picks the real-paste or copy-only path by the live grant.
     func start(text: String) {
-        switch ReinsertMode.decide(trusted: AXIsProcessTrusted()) {
+        start(text: text, mode: ReinsertMode.decide(trusted: AXIsProcessTrusted()))
+    }
+
+    /// Explicit mode plus injected copy/ownership keep UI lifecycle tests off
+    /// the general clipboard and away from permission probes and real events.
+    func start(text: String, mode: ReinsertMode) {
+        switch mode {
         case .paste:    beginCountdown(text: text)
         case .copyOnly: copyOnly(text: text)
         }
@@ -37,6 +62,7 @@ final class ReinsertController: ObservableObject {
 
     /// Cancel an in-flight countdown / dismiss the fallback banner.
     func cancel() {
+        generation = UUID()
         task?.cancel()
         task = nil
         phase = .idle
@@ -54,33 +80,40 @@ final class ReinsertController: ObservableObject {
     /// 3-2-1 so focus can leave the Hub and land in your target field — then the
     /// ⌘V posts to whatever is frontmost. Port of app.py:_reinsert + insert.py.
     private func beginCountdown(text: String) {
-        task?.cancel()
+        cancel()
+        let current = generation
         task = Task { @MainActor [weak self] in
             guard let self else { return }
             for remaining in stride(from: 3, through: 1, by: -1) {
                 self.phase = .countdown(remaining)
                 try? await Task.sleep(nanoseconds: 1_000_000_000)
-                if Task.isCancelled { self.phase = .idle; return }
+                guard !Task.isCancelled, self.generation == current else { return }
             }
-            self.paste(text: text)
-            self.phase = .idle
+            // Capture focus after the countdown, before waiting for ownership.
+            self.phase = .waiting(copyOnly: false)
+            guard let request = await self.prepareRequest() else { return }
+            defer { request.cancelUnused() }
+            guard !Task.isCancelled, self.generation == current else { return }
+            let outcome = Paster.paste(text, request: request)
+            self.phase = .afterPaste(outcome)
         }
-    }
-
-    private func paste(text: String) {
-        Paster.paste(text)  // shared recipe — see Engine/Paster.swift
     }
 
     // MARK: - copy-only path (not granted)
 
     private func copyOnly(text: String) {
-        _ = Paster.stage(NSPasteboard.general, text)   // concealed, like a real paste would be
-        task?.cancel()
-        phase = .copied
-        // Auto-dismiss the prompt; the clipboard keeps the text either way.
+        cancel()
+        phase = .waiting(copyOnly: true)
+        let current = generation
         task = Task { @MainActor [weak self] in
+            guard let self, let request = await self.prepareRequest() else { return }
+            defer { request.cancelUnused() }
+            guard !Task.isCancelled, self.generation == current else { return }
+            self.copyText(text, request)
+            self.phase = .copied(needsAccessibility: true)
+            // Auto-dismiss only this request's prompt; clipboard text stays.
             try? await Task.sleep(nanoseconds: 8_000_000_000)
-            if !Task.isCancelled, case .copied = self?.phase { self?.phase = .idle }
+            if !Task.isCancelled, self.generation == current { self.phase = .idle }
         }
     }
 }

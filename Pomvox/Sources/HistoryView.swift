@@ -61,8 +61,8 @@ struct HistoryView: View {
 }
 
 /// Top-of-History strip during a re-insert: a 3-2-1 countdown when Accessibility
-/// is granted, or the copy-it-yourself prompt when it isn't. Either way the user
-/// is never left guessing whether the paste happened.
+/// is granted, an explicit cancellable ownership wait, and distinct recovery
+/// prompts for copied text versus an unverified best-effort paste.
 private struct ReinsertBanner: View {
     @EnvironmentObject var reinserter: ReinsertController
 
@@ -76,15 +76,36 @@ private struct ReinsertBanner: View {
                 Spacer()
                 Button("Cancel") { reinserter.cancel() }
                     .buttonStyle(.plain).font(Typo.ui(12.5, .medium)).foregroundStyle(Palette.inkSoft)
-            case .copied:
+            case .waiting(let copyOnly):
+                ProgressView().controlSize(.small)
+                Text(copyOnly ? "Waiting to copy — the clipboard is still in use."
+                             : "Waiting to re-insert — keep your target field focused.")
+                    .font(Typo.ui(12.5, .medium)).foregroundStyle(Palette.ink)
+                Spacer()
+                Button("Cancel") { reinserter.cancel() }
+                    .buttonStyle(.plain).font(Typo.ui(12.5, .medium)).foregroundStyle(Palette.inkSoft)
+            case .pasteUnverified:
+                Image(systemName: "doc.on.clipboard.fill").font(.system(size: 13)).foregroundStyle(Palette.ember)
+                Text("Paste attempted — check your text field before pasting again.")
+                    .font(Typo.ui(12.5, .medium)).foregroundStyle(Palette.ink)
+                Text("Your text is also on the clipboard if insertion did not happen.")
+                    .font(Typo.ui(12)).foregroundStyle(Palette.muted)
+                Spacer()
+                Button("Dismiss") { reinserter.cancel() }
+                    .buttonStyle(.plain).font(Typo.ui(12.5, .medium)).foregroundStyle(Palette.inkSoft)
+            case .copied(let needsAccessibility):
                 Image(systemName: "doc.on.clipboard.fill").font(.system(size: 13)).foregroundStyle(Palette.ember)
                 Text("Copied — switch to your app and press ⌘V.")
                     .font(Typo.ui(12.5, .medium)).foregroundStyle(Palette.ink)
-                Text("Pomvox doesn't have Accessibility yet, so it can't paste for you.")
+                Text(needsAccessibility
+                     ? "Pomvox doesn't have Accessibility yet, so it can't paste for you."
+                     : "The paste destination changed or couldn't be verified. Your text is on the clipboard.")
                     .font(Typo.ui(12)).foregroundStyle(Palette.muted)
                 Spacer()
-                Button("Grant Accessibility…") { reinserter.openAccessibilitySettings() }
-                    .buttonStyle(.plain).font(Typo.ui(12.5, .semibold)).foregroundStyle(Palette.ember)
+                if needsAccessibility {
+                    Button("Grant Accessibility…") { reinserter.openAccessibilitySettings() }
+                        .buttonStyle(.plain).font(Typo.ui(12.5, .semibold)).foregroundStyle(Palette.ember)
+                }
                 Button("Dismiss") { reinserter.cancel() }
                     .buttonStyle(.plain).font(Typo.ui(12.5, .medium)).foregroundStyle(Palette.inkSoft)
             case .idle:
