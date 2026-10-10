@@ -149,7 +149,12 @@ struct SetupView: View {
         selfTestText = ""
         testFieldFocused = true
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
-            _ = Paster.paste(OnboardingFlow.selfTestText)
+            Task { @MainActor in
+                guard let request = await Paster.prepare() else { return }
+                defer { request.cancelUnused() }
+                guard !Task.isCancelled else { return }
+                _ = Paster.paste(OnboardingFlow.selfTestText, request: request)
+            }
         }
     }
 }

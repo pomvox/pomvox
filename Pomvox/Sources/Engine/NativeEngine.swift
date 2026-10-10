@@ -1368,8 +1368,13 @@ final class NativeEngine: ObservableObject {
             // utterance is still current after the transforms and immediately
             // before the paste.
             let notice = cleanupNotice
+            // Wait before the final currency check, never inside its synchronous
+            // insert callback. Cancellation/supersession must not enqueue a paste.
+            guard let pasteRequest = await Paster.prepare() else { return }
             let delivered: (text: String, fired: [String], appHint: String?, pastedAt: Double?)? =
                 await MainActor.run {
+                    defer { pasteRequest.cancelUnused() }
+                    guard !Task.isCancelled else { return nil }
                     var fired: [String] = []
                     var appHint: String?
                     var pastedAt: Double?
@@ -1385,7 +1390,7 @@ final class NativeEngine: ObservableObject {
                         insert: { text in
                             (appHint, pastedAt) = self.insertFinal(
                                 text, raw: raw, samples: samples, sttError: sttError, t0: t0,
-                                cleanupNotice: notice)
+                                cleanupNotice: notice, pasteRequest: pasteRequest)
                         })
                     guard case .inserted(let text) = delivery else { return nil }
                     self.utterances.retire()
@@ -1467,7 +1472,7 @@ final class NativeEngine: ObservableObject {
     /// frontmost app and paste time for history. Called only from
     /// `deliverUtterance`'s `insert`, after its final currency check.
     private func insertFinal(_ text: String, raw: String, samples: [Float], sttError: String?,
-                             t0: CFAbsoluteTime, cleanupNotice: String?) -> (String?, Double?) {
+                             t0: CFAbsoluteTime, cleanupNotice: String?, pasteRequest: Paster.Request) -> (String?, Double?) {
         guard !isBlankTranscript(text) else {
             let peak = peakDbfs(samples)
             let cause = classifyEmptyTranscript(
@@ -1489,7 +1494,7 @@ final class NativeEngine: ObservableObject {
         // app_hint = whatever is frontmost when the paste lands.
         let hint = NSWorkspace.shared.frontmostApplication?.localizedName
         lastTranscript = text  // retained for recovery before the paste
-        let outcome = Paster.paste(text)
+        let outcome = Paster.paste(text, request: pasteRequest)
         let pasteT = CFAbsoluteTimeGetCurrent()
         lastPasteMs = (pasteT - t0) * 1000
         var pastedAt: Double?
@@ -1504,9 +1509,15 @@ final class NativeEngine: ObservableObject {
                 bus.post(.result("ok", text))
             }
             NSLog("engine: paste %.0fms (%d chars)", lastPasteMs ?? 0, text.count)
+        case .pasteUnverified:
+            // The best-effort event may have worked despite an unreliable AX
+            // probe. Check first so clipboard recovery does not duplicate it.
+            let recovery = "check paste — text also on clipboard"
+            bus.post(.result("error", cleanupNotice.map { "\($0) — \(recovery)" } ?? recovery))
+            NSLog("engine: paste unverified — retained %d chars on the clipboard", text.count)
         case .copiedToClipboard:
-            // No editable field had focus — the transcript is on the
-            // clipboard, not lost. Tell the user via the HUD flash.
+            // Focus changed while waiting. No event was posted; text remains
+            // on the clipboard for explicit recovery.
             if let cleanupNotice {
                 bus.post(.result("error", "\(cleanupNotice) — copied to clipboard"))
             } else {

@@ -9,7 +9,7 @@ import XCTest
 ///
 /// The restore is consumption-keyed (issue #82's recurrence): the transcript's
 /// string flavor is staged through a data provider, so `deliver` can tell
-/// whether the paste target has actually READ it. Tests drive the injected
+/// whether any consumer has read it (not an OS acknowledgement). Tests drive the injected
 /// scheduler by hand: `schedule` records (delay, body) pairs, and reading the
 /// pasteboard from the test IS the consumption signal (same-process promises
 /// resolve synchronously).
@@ -34,7 +34,8 @@ final class PasterTests: XCTestCase {
         }
     }
 
-    func testFocusedFieldStagesTextThenRestoresPriorClipboard() {
+    @MainActor
+    func testFocusedFieldStagesTextThenRestoresPriorClipboard() async {
         let pb = freshPasteboard()
         pb.setString("old", forType: .string)
         let scheduler = FakeScheduler()
@@ -51,7 +52,8 @@ final class PasterTests: XCTestCase {
         XCTAssertEqual(pb.string(forType: .string), "old")       // prior clipboard back
     }
 
-    func testNoFocusLeavesTranscriptOnClipboardInsteadOfLosingIt() {
+    @MainActor
+    func testNoFocusLeavesTranscriptOnClipboardInsteadOfLosingIt() async {
         let pb = freshPasteboard()
         pb.setString("old", forType: .string)
         let scheduler = FakeScheduler()
@@ -60,8 +62,9 @@ final class PasterTests: XCTestCase {
                                      synthesizePaste: {},
                                      schedule: scheduler.schedule)
 
-        XCTAssertEqual(outcome, .copiedToClipboard)
-        XCTAssertTrue(scheduler.steps.isEmpty)                   // no restore → keep it
+        XCTAssertEqual(outcome, .pasteUnverified)
+        XCTAssertEqual(scheduler.steps.count, 1)                 // hold ownership, without restore
+        scheduler.fire()
         XCTAssertEqual(pb.string(forType: .string), "dictated")  // recoverable, not lost
     }
 
@@ -70,12 +73,14 @@ final class PasterTests: XCTestCase {
     /// prior clipboard instead of the staged transcript. 0.15 s was too short;
     /// pin the floor to the chosen 0.5 s so it can't be shortened back into the
     /// race — a *longer* delay stays safe (it only widens the recovery window).
-    func testRestoreDelayIsGenerousEnoughToOutlastASlowPaste() {
+    @MainActor
+    func testRestoreDelayIsGenerousEnoughToOutlastASlowPaste() async {
         XCTAssertGreaterThanOrEqual(Paster.restoreDelay, 0.5)
         XCTAssertGreaterThan(Paster.unreadRestoreDelay, Paster.restoreDelay)
     }
 
-    func testRestoreYieldsToARealUserCopyDuringTheDelay() {
+    @MainActor
+    func testRestoreYieldsToARealUserCopyDuringTheDelay() async {
         let pb = freshPasteboard()
         pb.setString("old", forType: .string)
         let scheduler = FakeScheduler()
@@ -90,7 +95,8 @@ final class PasterTests: XCTestCase {
 
     // MARK: - consumption-keyed restore (the fixed timer raced slow apps, #82)
 
-    func testUnreadTranscriptDefersRestoreToTheLongFallback() {
+    @MainActor
+    func testUnreadTranscriptDefersRestoreToTheLongFallback() async {
         // The target app hasn't processed the ⌘V by the 0.5 s checkpoint (busy
         // Electron, app mid-launch). Restoring now would make its eventual
         // paste insert the PRIOR clipboard — the "pasted what I didn't say"
@@ -111,7 +117,8 @@ final class PasterTests: XCTestCase {
         XCTAssertEqual(pb.string(forType: .string), "old")
     }
 
-    func testSlowReadBetweenCheckpointAndFallbackStillGetsTheTranscript() {
+    @MainActor
+    func testSlowReadBetweenCheckpointAndFallbackStillGetsTheTranscript() async {
         let pb = freshPasteboard()
         pb.setString("old", forType: .string)
         let scheduler = FakeScheduler()
@@ -126,7 +133,8 @@ final class PasterTests: XCTestCase {
 
     // MARK: - full-fidelity restore (a dictation must not eat the clipboard)
 
-    func testRestorePreservesANonTextClipboard() {
+    @MainActor
+    func testRestorePreservesANonTextClipboard() async {
         // A copied image (screenshot, file, …) must come back after a
         // dictation. Only the plain string used to be saved, so any non-text
         // clipboard was permanently replaced by the transcript.
@@ -145,7 +153,8 @@ final class PasterTests: XCTestCase {
         XCTAssertNil(pb.string(forType: .string))                // and only the image
     }
 
-    func testRestorePreservesEveryFlavorOfARichItem() {
+    @MainActor
+    func testRestorePreservesEveryFlavorOfARichItem() async {
         // Rich text (a browser or Word copy) carries several flavors on one
         // item; restoring just the plain string silently degrades it.
         let pb = freshPasteboard()
@@ -163,7 +172,8 @@ final class PasterTests: XCTestCase {
         XCTAssertEqual(pb.string(forType: .html), "<b>hello</b>")
     }
 
-    func testEmptyPriorClipboardKeepsTranscriptAfterRestore() {
+    @MainActor
+    func testEmptyPriorClipboardKeepsTranscriptAfterRestore() async {
         // Nothing to restore: keep the transcript recoverable instead of
         // clearing the clipboard (the pre-existing empty-clipboard behavior).
         let pb = freshPasteboard()

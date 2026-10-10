@@ -4,8 +4,9 @@ import Foundation
 
 /// What `paste` did with the transcript.
 enum PasteOutcome: Equatable {
-    case pasted             // an editable field had focus; ⌘V delivered it there
-    case copiedToClipboard  // no editable field focused — left on the clipboard for recovery
+    case pasted             // editable field reported focus; ⌘V posted, not OS-acknowledged
+    case copiedToClipboard  // no event posted — left on the clipboard for recovery
+    case pasteUnverified    // best-effort event posted; keep text, but avoid encouraging a duplicate
 }
 
 /// The text-insertion recipe shared by the native engine (fresh dictation) and
@@ -18,8 +19,8 @@ enum PasteOutcome: Equatable {
 /// so a dictation with no focused text field is silently lost (the Python app
 /// recovers via a "copy last transcript" menu item). The native engine has no
 /// menu bar, so instead — when no editable field is focused — it leaves the
-/// transcript on the clipboard and reports `.copiedToClipboard` (the HUD shows a
-/// "copied to clipboard" flash). The ⌘V is *always* synthesized regardless, so
+/// transcript on the clipboard and reports `.pasteUnverified` (the HUD asks
+/// the user to check the paste before recovering from the clipboard). The ⌘V is *always* synthesized regardless, so
 /// the focus probe can never break the normal paste in apps where AX focus
 /// reporting is unreliable.
 ///
@@ -27,7 +28,72 @@ enum PasteOutcome: Equatable {
 /// flavor (`ClipboardSnapshot`), not just the plain string — `insert.py`'s
 /// string-only save meant a copied image or file vanished after a dictation
 /// and rich text came back stripped to plain.
+@MainActor
 enum Paster {
+    private static let coordinator = PasteCoordinator()
+
+    /// Acquired before the utterance currency check. Insertion consumes it;
+    /// stale/empty callers must release unused ownership with `cancelUnused`.
+    @MainActor
+    final class Request {
+        private var lease: PasteCoordinator.Lease?
+        fileprivate let targetIsCurrent: () -> Bool
+
+        fileprivate init(lease: PasteCoordinator.Lease, targetIsCurrent: @escaping () -> Bool) {
+            self.lease = lease
+            self.targetIsCurrent = targetIsCurrent
+        }
+
+        func cancelUnused() {
+            lease?.release()
+            lease = nil
+        }
+
+        fileprivate func takeLease() -> PasteCoordinator.Lease {
+            precondition(lease != nil, "Paste request already consumed")
+            let result = lease!
+            lease = nil
+            return result
+        }
+    }
+
+    /// Remember the foreground app and (when AX reports it) the focused field
+    /// before waiting. A delayed request must not paste into a different field.
+    private struct Target {
+        let pid: pid_t?
+        let element: AXUIElement?
+
+        static func capture() -> Target {
+            var focused: AnyObject?
+            let result = AXUIElementCopyAttributeValue(
+                AXUIElementCreateSystemWide(), kAXFocusedUIElementAttribute as CFString, &focused)
+            return Target(pid: NSWorkspace.shared.frontmostApplication?.processIdentifier,
+                          element: result == .success ? (focused as! AXUIElement?) : nil)
+        }
+
+        func isCurrent() -> Bool {
+            let current = Target.capture()
+            guard pid == current.pid else { return false }
+            switch (element, current.element) {
+            case (nil, nil): return true  // AX unavailable: retain the existing best-effort fallback.
+            case let (old?, new?): return CFEqual(old, new)
+            default: return false
+            }
+        }
+    }
+
+    static func prepare() async -> Request? {
+        let target = Target.capture()
+        return await prepare(using: coordinator, targetIsCurrent: target.isCurrent)
+    }
+
+    /// Injection seam: tests use named pasteboards and never inspect real focus.
+    static func prepare(using owner: PasteCoordinator,
+                        targetIsCurrent: @escaping () -> Bool) async -> Request? {
+        guard let lease = await owner.acquire() else { return nil }
+        return Request(lease: lease, targetIsCurrent: targetIsCurrent)
+    }
+
     static let keyV: CGKeyCode = 9
     /// nspasteboard.org convention: clipboard managers (Maccy, Paste, Alfred…)
     /// that honor it skip items carrying this type, so dictations don't pile up
@@ -39,8 +105,9 @@ enum Paster {
     /// apps twice (0.15 s originally, then 0.5 s in #82): if the restore fired
     /// first, the app pasted the *restored prior clipboard* instead of the
     /// transcript. The transcript's string is therefore staged through a data
-    /// provider, so at this checkpoint `deliver` KNOWS whether the paste target
-    /// has read it: read → restore now (same timing as before); unread → hold
+    /// provider. A read is only a heuristic: a clipboard manager can also read
+    /// it, and macOS provides no target acknowledgement. Read → restore now;
+    /// unread → hold
     /// the transcript until `unreadRestoreDelay`. Keep this at ≥ 0.5 s so a
     /// clipboard manager's early read can never make the restore fire sooner
     /// than it used to.
@@ -68,17 +135,41 @@ enum Paster {
     /// transcript is left on the clipboard so it isn't lost. Returns what
     /// happened.
     @discardableResult
-    static func paste(_ text: String) -> PasteOutcome {
-        deliver(text, to: .general, focusedAcceptsText: focusedElementAcceptsText(),
+    static func paste(_ text: String, request: Request) -> PasteOutcome {
+        perform(text, request: request, to: .general,
+                focusedAcceptsText: focusedElementAcceptsText(),
                 synthesizePaste: { synthesizeCommandV() },
                 schedule: { delay, body in
                     DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: body)
                 })
     }
 
+    /// All production clipboard writes, including copy-only recovery, go through
+    /// an acquired request. Ownership transfers to the terminal restore callback.
+    @discardableResult
+    static func perform(_ text: String, request: Request, to pb: NSPasteboard,
+                        focusedAcceptsText: Bool, copyOnly: Bool = false,
+                        synthesizePaste: () -> Void,
+                        schedule: @escaping (Double, @escaping () -> Void) -> Void) -> PasteOutcome {
+        let lease = request.takeLease()
+        if copyOnly || !request.targetIsCurrent() {
+            stage(pb, text)
+            lease.release()
+            return .copiedToClipboard
+        }
+        return deliver(text, to: pb, focusedAcceptsText: focusedAcceptsText,
+                       synthesizePaste: synthesizePaste, schedule: schedule,
+                       completed: lease.release)
+    }
+
+    static func copy(_ text: String, request: Request) {
+        _ = perform(text, request: request, to: .general, focusedAcceptsText: false,
+                    copyOnly: true, synthesizePaste: {}, schedule: { _, _ in })
+    }
+
     /// Lazily provides the transcript's string flavor and records whether it
-    /// was ever read. That first read IS the paste target consuming the
-    /// transcript — the signal that keys the clipboard restore. Thread-safe:
+    /// was ever read. This is not proof the target consumed the transcript;
+    /// clipboard managers may resolve it too. It keys the bounded restore heuristic. Thread-safe:
     /// AppKit may resolve promises off the main thread.
     private final class TranscriptProvider: NSObject, NSPasteboardItemDataProvider, @unchecked Sendable {
         private let text: String
@@ -103,7 +194,8 @@ enum Paster {
     @discardableResult
     static func deliver(_ text: String, to pb: NSPasteboard, focusedAcceptsText: Bool,
                         synthesizePaste: () -> Void,
-                        schedule: @escaping (Double, @escaping () -> Void) -> Void) -> PasteOutcome {
+                        schedule: @escaping (Double, @escaping () -> Void) -> Void,
+                        completed: @escaping () -> Void = {}) -> PasteOutcome {
         guard focusedAcceptsText else {
             // No editable field — stage eagerly (nothing will restore, so the
             // data must not depend on this call's provider staying relevant)
@@ -111,7 +203,10 @@ enum Paster {
             // recoverable rather than silently lost.
             stage(pb, text)
             synthesizePaste()
-            return .copiedToClipboard
+            // Even without a reliable AX focus signal the key event is queued.
+            // Protect that payload through the existing maximum restore window.
+            schedule(unreadRestoreDelay, completed)
+            return .pasteUnverified
         }
         let saved = snapshot(pb)
         pb.clearContents()
@@ -123,17 +218,18 @@ enum Paster {
         let ourChange = pb.changeCount
         synthesizePaste()
         let restoreIfUnchanged = {
+            defer { completed() }
             if !saved.isEmpty, pb.changeCount == ourChange {
                 restore(saved, to: pb)
             }
         }
         schedule(restoreDelay) {
             if provider.wasRead {
-                // Consumed — restore on the same timeline as always.
+                // A read was observed — retain the existing bounded heuristic.
                 restoreIfUnchanged()
             } else {
-                // The target app hasn't processed the ⌘V yet (mid-launch,
-                // busy Electron — the #82 failure mode). Restoring now would
+                // No string read has been observed (possibly a busy target,
+                // the #82 failure mode). Restoring now could
                 // make its eventual paste insert the PRIOR clipboard, so hold
                 // the transcript, then give the clipboard back regardless.
                 schedule(unreadRestoreDelay - restoreDelay, restoreIfUnchanged)
