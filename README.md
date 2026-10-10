@@ -38,6 +38,19 @@ and [CONTRIBUTING.md](CONTRIBUTING.md) to get involved.
 > you can also build from source. The native engine is **on by default**; the
 > Python engine remains available as a fallback (see [Two engines](#two-engines)).
 
+## Speech accessibility and optional cleanup
+
+For people who stutter or stammer, or whose dictation includes disfluency,
+Pomvox's optional on-device cleanup may help turn recognized text into readable
+prose. Cleanup works after speech recognition: it cannot guarantee accurate
+recognition or correction. Results depend on the model, configuration, and
+transcript. Smaller Macs have different defaults; not every installation uses
+SimpleWords v3.
+
+See [Speech accessibility](docs/accessibility.md) for the documented
+Thursday/Friday example, cleanup settings and fallback behavior, and History
+review, copy, and re-insert recovery.
+
 ## Requirements
 
 - Apple Silicon Mac (reference hardware: M1, 16 GB), macOS 14+
