@@ -1,7 +1,8 @@
 # Drop this file into .github/workflows/factory.yml of each portfolio repo.
-# It only routes events to the reusable workflows in pomvox/pomvox_loop.
-# Needs org secrets CLAUDE_CODE_OAUTH_TOKEN and FACTORY_GH_TOKEN, and pomvox_loop's
-# Actions access set to "organization" so this private reusable workflow can be called.
+# It is a relay and nothing else: it forwards issue and PR events to the private
+# factory repo (pomvox/pomvox_loop), where every agent runs. GitHub does not let a
+# public repo call reusable workflows in a private one, so the work cannot run here.
+# Needs one repo secret: FACTORY_GH_TOKEN (a token that can dispatch to pomvox_loop).
 name: Factory
 on:
   issues:
@@ -11,85 +12,33 @@ on:
   pull_request:
     types: [opened, reopened, synchronize, labeled, closed]
 
-permissions:
-  contents: read
-  issues: write
-  pull-requests: write
-  id-token: write
+permissions: {}
 
 jobs:
-  research-pm:
-    if: github.event_name == 'issues' && contains(fromJSON('["proposal","loop-suggested","agent-suggested"]'), github.event.label.name)
-    uses: pomvox/pomvox_loop/.github/workflows/agent.yml@main
-    with:
-      role: research-pm
-      issue: ${{ github.event.issue.number }}
-    secrets: inherit
-
-  triage:
-    if: github.event_name == 'issues' && github.event.label.name == 'agent-ready' && !contains(github.event.issue.labels.*.name, 'retry')
-    uses: pomvox/pomvox_loop/.github/workflows/agent.yml@main
-    with:
-      role: triage
-      issue: ${{ github.event.issue.number }}
-    secrets: inherit
-
-  approve:
-    if: github.event_name == 'issue_comment' && !github.event.issue.pull_request
-    uses: pomvox/pomvox_loop/.github/workflows/conveyor.yml@main
-    with:
-      step: approve
-      issue: ${{ github.event.issue.number }}
-      comment_body: ${{ github.event.comment.body }}
-      actor_association: ${{ github.event.comment.author_association }}
-    secrets: inherit
-
-  disarm:
-    if: github.event_name == 'pull_request' && github.event.action == 'synchronize' && contains(github.event.pull_request.labels.*.name, 'agent-loop')
-    uses: pomvox/pomvox_loop/.github/workflows/conveyor.yml@main
-    with:
-      step: disarm
-      pr: ${{ github.event.pull_request.number }}
-    secrets: inherit
-
-  evaluator:
-    needs: [disarm]
-    if: >-
-      !cancelled() && github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'agent-loop') &&
-      (github.event.action == 'opened' || github.event.action == 'reopened' || github.event.action == 'synchronize' || (github.event.action == 'labeled' && github.event.label.name == 'agent-loop'))
-    uses: pomvox/pomvox_loop/.github/workflows/agent.yml@main
-    with:
-      role: evaluator
-      pr: ${{ github.event.pull_request.number }}
-      ref: ${{ github.event.pull_request.head.sha }}
-      base: ${{ github.event.pull_request.base.ref }}
-    secrets: inherit
-
-  security:
-    needs: [disarm]
-    if: >-
-      !cancelled() && github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'agent-loop') &&
-      (github.event.action == 'opened' || github.event.action == 'reopened' || github.event.action == 'synchronize' || (github.event.action == 'labeled' && github.event.label.name == 'agent-loop'))
-    uses: pomvox/pomvox_loop/.github/workflows/agent.yml@main
-    with:
-      role: security
-      pr: ${{ github.event.pull_request.number }}
-      ref: ${{ github.event.pull_request.head.sha }}
-      base: ${{ github.event.pull_request.base.ref }}
-    secrets: inherit
-
-  ready:
-    if: github.event_name == 'pull_request' && github.event.action == 'labeled' && (github.event.label.name == 'eval-pass' || github.event.label.name == 'sec-pass')
-    uses: pomvox/pomvox_loop/.github/workflows/conveyor.yml@main
-    with:
-      step: ready
-      pr: ${{ github.event.pull_request.number }}
-    secrets: inherit
-
-  steward:
-    if: github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.merged == true && contains(github.event.pull_request.labels.*.name, 'agent-loop')
-    uses: pomvox/pomvox_loop/.github/workflows/agent.yml@main
-    with:
-      role: steward
-      pr: ${{ github.event.pull_request.number }}
-    secrets: inherit
+  relay:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Forward the event to pomvox_loop
+        env:
+          GH_TOKEN: ${{ secrets.FACTORY_GH_TOKEN }}
+        run: |
+          payload=$(jq -c '{
+            repo: .repository.full_name,
+            event: env.GITHUB_EVENT_NAME,
+            action: .action,
+            label: (.label.name // ""),
+            issue: (if .issue then {number: .issue.number, labels: [.issue.labels[].name], is_pr: (.issue.pull_request != null)} else null end),
+            comment: (if .comment then {body: .comment.body[0:1000], association: .comment.author_association} else null end),
+            pr: (if .pull_request then {number: .pull_request.number, head_sha: .pull_request.head.sha, base: .pull_request.base.ref, labels: [.pull_request.labels[].name], merged: (.pull_request.merged // false)} else null end)
+          }' "$GITHUB_EVENT_PATH")
+          # Forward only what the factory listens for. Everything else stays quiet.
+          want=$(printf '%s' "$payload" | jq -r '. as $e |
+            if $e.event == "issues" then (["proposal","loop-suggested","agent-suggested","agent-ready"] | index($e.label)) != null
+            elif $e.event == "issue_comment" then ($e.issue.is_pr | not) and (($e.issue.labels | map(select(. == "proposal" or . == "loop-suggested" or . == "agent-suggested" or . == "needs-human" or . == "agent-ready")) | length) > 0)
+            elif $e.event == "pull_request" then (($e.pr.labels | index("agent-loop")) != null) or ((["agent-loop","eval-pass","sec-pass"] | index($e.label)) != null)
+            else false end')
+          if [ "$want" != "true" ]; then echo "not a factory event; nothing forwarded"; exit 0; fi
+          jq -n --argjson p "$payload" '{event_type: "factory", client_payload: $p}' \
+            | gh api -X POST repos/pomvox/pomvox_loop/dispatches --input -
+          echo "forwarded: $(printf '%s' "$payload" | jq -c '{event, action, label, issue: .issue.number, pr: .pr.number}')"
