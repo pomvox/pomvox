@@ -12,6 +12,11 @@ import Foundation
 ///   `fn+space`, a tap of the PTT key, or the optional `stop` key stops.
 /// - cancel: `esc` while recording discards the utterance.
 /// Toggle/stop/cancel keypresses are swallowed; everything else passes through.
+///
+/// Swift-only extension (#191): `ptt` also accepts the mouse side buttons
+/// `mouse4` / `mouse5`, which ride the modifier path (a down/up pair) under
+/// synthetic keycodes and are swallowed so the app never sees a Back/Forward.
+/// The Python spec and its vectors stay keyboard-only; Fn is unchanged.
 enum HotkeyError: Error, Equatable {
     case unknownKey(String)
     case badToggle(String)
@@ -51,10 +56,29 @@ final class HotkeyMachine {
         "right_command": 54,
         "right_shift": 60,
         "right_control": 62,
+        // Mouse side buttons: synthetic codes, see `mouseKeycodeBase`.
+        "mouse4": mouseKeycodeBase + 3,
+        "mouse5": mouseKeycodeBase + 4,
     ]
 
     /// Keycodes that arrive as flagsChanged rather than keyDown (used by EventTap).
     static let modifierKeycodes: Set<Int> = [63, 61, 58, 54, 55, 60, 56, 62, 59]
+
+    /// Mouse buttons share the keycode space with keys, offset past the 7-bit
+    /// virtual keycode range so they can never collide. CGEvent numbers
+    /// buttons from 0 (left, right, middle), so "button 4/5" are 3 and 4.
+    static let mouseKeycodeBase = 1000
+
+    /// The machine keycode for a CGEvent `mouseEventButtonNumber`; nil for a
+    /// button we don't bind (EventTap passes those through untouched).
+    static func mouseButtonKeycode(_ button: Int64) -> Int? {
+        switch button {
+        case 3, 4: return mouseKeycodeBase + Int(button)
+        default: return nil
+        }
+    }
+
+    static func isMouseButton(_ keycode: Int) -> Bool { keycode >= mouseKeycodeBase }
 
     /// Human-readable names for the Setup heartbeat and log lines. Unknown
     /// names echo through so a log never hides what the config actually said.
@@ -63,6 +87,7 @@ final class HotkeyMachine {
         "right_option": "Right Option (⌥)", "left_option": "Left Option (⌥)",
         "right_command": "Right Command (⌘)", "right_shift": "Right Shift (⇧)",
         "right_control": "Right Control (⌃)",
+        "mouse4": "Mouse Button 4", "mouse5": "Mouse Button 5",
     ]
 
     static func displayName(_ configName: String) -> String {
@@ -90,6 +115,9 @@ final class HotkeyMachine {
     /// reaching Pomvox at all?" — hardware Fn keys on third-party keyboards
     /// often never generate an event).
     var pttKeycode: Int { pttKey }
+    /// Whether PTT is a mouse side button: EventTap subscribes to mouse
+    /// events only then, so a keyboard setup pays nothing for the feature.
+    var pttIsMouseButton: Bool { Self.isMouseButton(pttKey) }
     let toggleMod: Int
     let toggleKey: Int
     let stopKey: Int?
@@ -100,14 +128,17 @@ final class HotkeyMachine {
 
     init(ptt: String = "fn", toggle: String = "fn+space",
          stop: String = "", cancel: String = "esc") throws {
-        self.pttKey = try Self.keycode(ptt)
+        // Mouse buttons arrive as a down/up pair (the modifier path), so they
+        // are valid for PTT and the toggle modifier only; in a keyDown role
+        // they would be silently inert, so there they fall back like a typo.
+        self.pttKey = try Self.keycode(ptt, mouseButtons: true)
         // Python uses str.partition('+'); a missing separator is an error.
         guard let plus = toggle.firstIndex(of: "+") else {
             throw HotkeyError.badToggle(toggle)
         }
         let mod = String(toggle[..<plus])
         let key = String(toggle[toggle.index(after: plus)...])
-        self.toggleMod = try Self.keycode(mod)
+        self.toggleMod = try Self.keycode(mod, mouseButtons: true)
         self.toggleKey = try Self.keycode(key)
         // Both optional: fn tap / fn+space already stop hands-free, and
         // cancel="" disables the discard gesture entirely.
@@ -115,14 +146,26 @@ final class HotkeyMachine {
         self.cancelKey = cancel.isEmpty ? nil : try Self.keycode(cancel)
     }
 
-    private static func keycode(_ name: String) throws -> Int {
+    private static func keycode(_ name: String, mouseButtons: Bool = false) throws -> Int {
         let key = name.trimmingCharacters(in: .whitespaces).lowercased()
-        guard let code = keycodes[key] else { throw HotkeyError.unknownKey(name) }
+        guard let code = keycodes[key], mouseButtons || !isMouseButton(code) else {
+            throw HotkeyError.unknownKey(name)
+        }
         return code
     }
 
-    /// A flagsChanged event (modifier key went down or up).
+    /// A flagsChanged event (modifier key went down or up), or a mouse side
+    /// button under its synthetic keycode.
     func onModifier(_ keycode: Int, _ isDown: Bool) -> Decision {
+        var decision = modifierDecision(keycode, isDown)
+        // A side button mapped to PTT belongs to Pomvox while armed: swallowed
+        // in every state, so the app underneath never gets a Back/Forward per
+        // dictation or an unbalanced down/up. Keyboard modifiers pass as before.
+        if keycode == pttKey, pttIsMouseButton { decision.swallow = true }
+        return decision
+    }
+
+    private func modifierDecision(_ keycode: Int, _ isDown: Bool) -> Decision {
         if isDown { modsDown.insert(keycode) } else { modsDown.remove(keycode) }
 
         if state == .idle, keycode == pttKey, isDown {

@@ -11,14 +11,27 @@ enum EventTapError: Error {
 /// of `hotkey.py:EventTap`. The decision closures are called synchronously on
 /// the tap thread and must stay fast; the owner (`NativeEngine`) serializes the
 /// HotkeyMachine behind them and returns the `Decision` (so swallowed keys are
-/// honored). flagsChanged always passes through; keys are swallowed only when
-/// the decision says so.
+/// honored). Keyboard modifiers always pass through; keys and mouse side
+/// buttons are swallowed only when the decision says so.
+///
+/// Mouse side buttons (#191) are subscribed only when `mouseButtons` is set
+/// (PTT is `mouse4`/`mouse5`), so a keyboard setup gets the tap it always had;
+/// they take the modifier path under the machine's synthetic keycodes.
 final class EventTap {
     typealias ModifierDecision = (_ keycode: Int, _ isDown: Bool) -> HotkeyMachine.Decision
     typealias KeyDecision = (_ keycode: Int) -> HotkeyMachine.Decision
 
+    /// Where an event goes. Pure, so the routing is unit-tested without a
+    /// live tap (which needs Input Monitoring and a window server).
+    enum Route: Equatable {
+        case modifier(keycode: Int, isDown: Bool)
+        case key(keycode: Int)
+        case pass
+    }
+
     private let onModifier: ModifierDecision
     private let onKeyDown: KeyDecision
+    private let mouseButtons: Bool
 
     private var tap: CFMachPort?
     private var source: CFRunLoopSource?
@@ -35,9 +48,38 @@ final class EventTap {
         59: .maskControl, 62: .maskControl,
     ]
 
-    init(onModifier: @escaping ModifierDecision, onKeyDown: @escaping KeyDecision) {
+    init(onModifier: @escaping ModifierDecision, onKeyDown: @escaping KeyDecision,
+         mouseButtons: Bool = false) {
         self.onModifier = onModifier
         self.onKeyDown = onKeyDown
+        self.mouseButtons = mouseButtons
+    }
+
+    static func eventMask(mouseButtons: Bool) -> CGEventMask {
+        var mask = (1 << CGEventType.flagsChanged.rawValue) | (1 << CGEventType.keyDown.rawValue)
+        if mouseButtons {
+            mask |= (1 << CGEventType.otherMouseDown.rawValue) | (1 << CGEventType.otherMouseUp.rawValue)
+        }
+        return CGEventMask(mask)
+    }
+
+    /// Fields are autoclosures so each event kind reads only its own field:
+    /// the keyboard path does exactly the reads it did before #191.
+    static func route(type: CGEventType, keycode: @autoclosure () -> Int64,
+                      flags: @autoclosure () -> CGEventFlags, button: @autoclosure () -> Int64) -> Route {
+        switch type {
+        case .flagsChanged:
+            let keycode = keycode()
+            guard let mask = modifierMasks[keycode] else { return .pass }
+            return .modifier(keycode: Int(keycode), isDown: flags().contains(mask))
+        case .keyDown:
+            return .key(keycode: Int(keycode()))
+        case .otherMouseDown, .otherMouseUp:
+            guard let code = HotkeyMachine.mouseButtonKeycode(button()) else { return .pass }
+            return .modifier(keycode: code, isDown: type == .otherMouseDown)
+        default:
+            return .pass
+        }
     }
 
     /// Backstop: if the last strong reference to a still-running tap is ever
@@ -51,12 +93,11 @@ final class EventTap {
     /// Create the tap (throws if Input Monitoring isn't granted) and run its
     /// run loop on a dedicated background thread.
     func start() throws {
-        let mask = (1 << CGEventType.flagsChanged.rawValue) | (1 << CGEventType.keyDown.rawValue)
         guard let tap = CGEvent.tapCreate(
             tap: .cgSessionEventTap,
             place: .headInsertEventTap,
             options: .defaultTap,
-            eventsOfInterest: CGEventMask(mask),
+            eventsOfInterest: Self.eventMask(mouseButtons: mouseButtons),
             callback: { _, type, event, refcon in
                 let me = Unmanaged<EventTap>.fromOpaque(refcon!).takeUnretainedValue()
                 return me.handle(type: type, event: event)
@@ -97,17 +138,16 @@ final class EventTap {
             if let tap { CGEvent.tapEnable(tap: tap, enable: true) }
             return Unmanaged.passUnretained(event)
         }
-        let keycode = event.getIntegerValueField(.keyboardEventKeycode)
         let decision: HotkeyMachine.Decision
-        switch type {
-        case .flagsChanged:
-            guard let mask = Self.modifierMasks[keycode] else {
-                return Unmanaged.passUnretained(event)
-            }
-            decision = onModifier(Int(keycode), event.flags.contains(mask))
-        case .keyDown:
-            decision = onKeyDown(Int(keycode))
-        default:
+        switch Self.route(type: type,
+                          keycode: event.getIntegerValueField(.keyboardEventKeycode),
+                          flags: event.flags,
+                          button: event.getIntegerValueField(.mouseEventButtonNumber)) {
+        case .modifier(let keycode, let isDown):
+            decision = onModifier(keycode, isDown)
+        case .key(let keycode):
+            decision = onKeyDown(keycode)
+        case .pass:
             return Unmanaged.passUnretained(event)
         }
         return decision.swallow ? nil : Unmanaged.passUnretained(event)

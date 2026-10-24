@@ -243,5 +243,82 @@ final class HotkeyMachineTests: XCTestCase {
         XCTAssertEqual(HotkeyMachine.displayName("fn"), "Fn (🌐)")
         XCTAssertEqual(HotkeyMachine.displayName("right_option"), "Right Option (⌥)")
         XCTAssertEqual(HotkeyMachine.displayName("weird"), "weird")  // unknown: echo as-is
+        XCTAssertEqual(HotkeyMachine.displayName("mouse4"), "Mouse Button 4")
+        XCTAssertEqual(HotkeyMachine.displayName("mouse5"), "Mouse Button 5")
+    }
+
+    // MARK: - mouse side buttons as PTT (#191, Swift-only; not in the Python spec)
+
+    let MOUSE4 = HotkeyMachine.keycodes["mouse4"]!
+    let MOUSE5 = HotkeyMachine.keycodes["mouse5"]!
+
+    /// Synthetic codes sit past the 7-bit keyboard range (never a key), and
+    /// CGEvent button numbers (left 0, right 1, middle 2, side 3/4) map onto them.
+    func testMouseKeycodesNeverCollideWithKeyboardKeys() {
+        XCTAssertGreaterThan(HotkeyMachine.mouseKeycodeBase, 127)
+        XCTAssertGreaterThanOrEqual(min(MOUSE4, MOUSE5), HotkeyMachine.mouseKeycodeBase)
+        XCTAssertEqual(HotkeyMachine.mouseButtonKeycode(3), MOUSE4)
+        XCTAssertEqual(HotkeyMachine.mouseButtonKeycode(4), MOUSE5)
+        for other: Int64 in [0, 1, 2, 5] { XCTAssertNil(HotkeyMachine.mouseButtonKeycode(other)) }
+    }
+
+    /// Same cycle as Fn (startPTT on down, stop on up), but the button's own
+    /// clicks are swallowed in *every* state so the app underneath never gets
+    /// a Back/Forward per dictation or an unbalanced down/up.
+    func testMouseButtonPttCycleIsSwallowedInEveryState() {
+        let m = try! HotkeyMachine(ptt: "mouse4")
+        XCTAssertTrue(m.pttIsMouseButton); XCTAssertEqual(m.pttKeycode, MOUSE4)
+        var d = m.onModifier(MOUSE4, true)
+        XCTAssertEqual(d.action, .startPTT); XCTAssertTrue(d.swallow)
+        d = m.onModifier(MOUSE4, false)
+        XCTAssertEqual(d.action, .stop); XCTAssertTrue(d.swallow)
+        XCTAssertEqual(m.state, .busy)
+        d = m.onModifier(MOUSE4, true)                  // click while busy: inert, still ours
+        XCTAssertEqual(d.action, .none); XCTAssertTrue(d.swallow)
+        m.done()
+
+        _ = m.onModifier(MOUSE4, true)
+        XCTAssertEqual(m.onKeyDown(ESC).action, .cancel)
+        d = m.onModifier(MOUSE4, false)                 // trailing release after Esc
+        XCTAssertEqual(d.action, .none); XCTAssertTrue(d.swallow)
+        d = m.onModifier(MOUSE5, true)                  // the other button is not ours
+        XCTAssertEqual(d.action, .none); XCTAssertFalse(d.swallow)
+    }
+
+    /// Fn is untouched: never swallowed, and inert on a mouse-mapped machine.
+    func testFnIsUnchangedByMouseSupport() {
+        let fn = make()
+        XCTAssertFalse(fn.pttIsMouseButton)
+        XCTAssertEqual(fn.onModifier(FN, true), .init(action: .startPTT, swallow: false))
+        XCTAssertEqual(fn.onModifier(FN, false), .init(action: .stop, swallow: false))
+        XCTAssertEqual(fn.onModifier(MOUSE4, true), HotkeyMachine.pass)
+        XCTAssertEqual(try! HotkeyMachine(ptt: "mouse4").onModifier(FN, true), HotkeyMachine.pass)
+    }
+
+    /// Hands-free from a side button: hold mouse4, tap Space; a second click stops.
+    func testMouseButtonAsToggleModifier() {
+        let m = try! HotkeyMachine(ptt: "mouse4", toggle: "mouse4+space")
+        _ = m.onModifier(MOUSE4, true)
+        XCTAssertEqual(m.onKeyDown(SPACE), .init(action: .enterToggle, swallow: true))
+        XCTAssertEqual(m.onModifier(MOUSE4, false).action, .none)
+        XCTAssertEqual(m.state, .toggle)
+        XCTAssertEqual(m.onModifier(MOUSE4, true), .init(action: .stop, swallow: true))
+    }
+
+    /// Mouse names are only observed as a down/up pair (PTT, toggle modifier).
+    /// In a keyDown role they would be silently inert, so they are rejected.
+    func testMouseNamesRejectedForKeyDownRoles() {
+        XCTAssertThrowsError(try HotkeyMachine(cancel: "mouse4"))
+        XCTAssertThrowsError(try HotkeyMachine(stop: "mouse5"))
+        XCTAssertThrowsError(try HotkeyMachine(toggle: "fn+mouse4"))
+        XCTAssertThrowsError(try HotkeyMachine(ptt: "mouse6"))
+    }
+
+    func testResolvedHonorsMouseButtonPttAndFallsBackOnUnknownButton() {
+        var r = HotkeyMachine.resolved(ptt: "mouse5", toggle: "fn+space", stop: "", cancel: "esc")
+        XCTAssertFalse(r.fellBack); XCTAssertEqual(r.machine.pttKeycode, MOUSE5)
+        r = HotkeyMachine.resolved(ptt: "mouse6", toggle: "fn+space", stop: "", cancel: "esc")
+        XCTAssertTrue(r.fellBack); XCTAssertEqual(r.machine.pttKeycode, 63)
+        XCTAssertFalse(r.machine.pttIsMouseButton)
     }
 }
