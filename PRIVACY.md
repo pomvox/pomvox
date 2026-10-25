@@ -86,10 +86,11 @@ Each POST is JSON with:
 
 `props` can only hold these fields (and only some events set them):
 
-- `duration_ms`
+- `duration_ms` — length of the recorded audio in milliseconds (samples at
+  16 kHz), not how long dictation took
 - `stt_model` — model basename only (`parakeet-tdt-0.6b-v2`, never a path)
 - `cleanup` — true/false
-- `cleanup_status` — `ok`, `timeout`, `rejected`, `error`, or `off`
+- `cleanup_status` — `ok`, `timeout`, `rejected`, `error`, `unavailable`, or `off`
 - `error_code` — a short enum token, never a message or stack trace
 - `stt_weight_load_ms`, `coreml_compile_ms`, `ane_warmup_ms`,
   `cleanup_load_ms`, `coreml_cache_hit`
