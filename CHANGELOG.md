@@ -7,6 +7,13 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 
 ## [Unreleased]
 
+### Added
+
+- **Settings ▸ Models lists every downloaded model and can remove the unused
+  ones.** Each model on disk shows with its size; the ones your settings name
+  are marked "in use" and can't be removed. "Remove unused models" asks first,
+  says how much it frees, and waits while a model is downloading or loading. (#100)
+
 ## [0.2.9] — 2026-09-27
 
 ### Changed
