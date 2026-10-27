@@ -25,11 +25,13 @@ enum QuickAddHotkey {
     ]
 
     /// Why a non-empty chord is unusable. A blank binding is not an error —
-    /// it means quick-add is off.
+    /// it means quick-add is off. The associated value is the token as read
+    /// (lowercased, trimmed) so the message can name it.
     enum Problem: Equatable {
         case needsModifier
-        case unknownModifier
-        case unknownKey
+        case unknownModifier(String)
+        case unknownKey(String)
+        case missingKey          // trailing "+": "cmd+"
     }
 
     static func parse(_ s: String) -> (flags: NSEvent.ModifierFlags, keyCode: UInt16)? {
@@ -44,10 +46,12 @@ enum QuickAddHotkey {
             return nil
         case .problem(.needsModifier):
             return "Needs at least one modifier (e.g. cmd+shift+d)."
-        case .problem(.unknownModifier):
-            return "Unknown modifier. Use cmd, shift, alt, or ctrl."
-        case .problem(.unknownKey):
-            return "Unknown key. Use a letter or digit (e.g. cmd+shift+d)."
+        case .problem(.unknownModifier(let mod)):
+            return "Unknown modifier “\(mod)”. Use cmd, shift, alt, or ctrl."
+        case .problem(.unknownKey(let key)):
+            return "Unknown key “\(key)”. Use a letter or digit (e.g. cmd+shift+d)."
+        case .problem(.missingKey):
+            return "Missing key after “+”. Use a letter or digit (e.g. cmd+shift+d)."
         }
     }
 
@@ -62,12 +66,11 @@ enum QuickAddHotkey {
         let parts = s.lowercased().components(separatedBy: "+")
             .map { $0.trimmingCharacters(in: .whitespaces) }
         guard parts.count >= 2 else { return .problem(.needsModifier) }
-        guard let keyName = parts.last, let keyCode = keycodes[keyName] else {
-            return .problem(.unknownKey)
-        }
+        guard let keyName = parts.last, !keyName.isEmpty else { return .problem(.missingKey) }
+        guard let keyCode = keycodes[keyName] else { return .problem(.unknownKey(keyName)) }
         var flags: NSEvent.ModifierFlags = []
         for mod in parts.dropLast() {
-            guard let f = modifiers[mod] else { return .problem(.unknownModifier) }
+            guard let f = modifiers[mod] else { return .problem(.unknownModifier(mod)) }
             flags.insert(f)
         }
         guard !flags.isEmpty else { return .problem(.needsModifier) }
@@ -98,18 +101,34 @@ final class QuickAddController {
     private var binding: (flags: NSEvent.ModifierFlags, keyCode: UInt16)?
     private var panel: QuickAddPanel?
     private let store = DictionaryStore.shared
+    /// The NSEvent monitor tokens. AppKit keeps a monitor alive until it is
+    /// handed back to `removeMonitor`, so dropping the token would leak the
+    /// monitor for the life of the process; `stop()` is the only way back.
+    private var monitors: [Any] = []
 
+    var isArmed: Bool { binding != nil }
+    var monitorCount: Int { monitors.count }
+
+    /// Arms the chord. Calling it again replaces the previous binding rather
+    /// than stacking a second pair of monitors (which would toggle the panel
+    /// twice per keypress), so a future live reload can just call `start`.
     func start(bindingString: String) {
+        stop()
         guard !bindingString.isEmpty else { return }
         guard let parsed = QuickAddHotkey.parse(bindingString) else {
             NSLog("quick-add: invalid [hotkey] quick_add %@ — disabled", bindingString)
             return
         }
         binding = parsed
-        NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] event in
+        // The global monitor returns nil without an Input Monitoring grant;
+        // the local one still fires inside the Hub, so quick-add keeps working
+        // there until Setup gets the grant.
+        if let global = NSEvent.addGlobalMonitorForEvents(matching: .keyDown, handler: { [weak self] event in
             MainActor.assumeIsolated { self?.handle(event) }
+        }) {
+            monitors.append(global)
         }
-        NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+        if let local = NSEvent.addLocalMonitorForEvents(matching: .keyDown, handler: { [weak self] event in
             var swallowed = false
             MainActor.assumeIsolated {
                 if let self, let b = self.binding, QuickAddHotkey.matches(event, b) {
@@ -117,8 +136,18 @@ final class QuickAddController {
                 }
             }
             return swallowed ? nil : event
+        }) {
+            monitors.append(local)
         }
         NSLog("quick-add: armed on %@", bindingString)
+    }
+
+    /// Removes the monitors and forgets the binding. The panel, if open,
+    /// stays open: it is a window the user is typing into, not a hotkey.
+    func stop() {
+        for m in monitors { NSEvent.removeMonitor(m) }
+        monitors.removeAll()
+        binding = nil
     }
 
     private func handle(_ event: NSEvent) {
