@@ -77,10 +77,14 @@ enum SettingsSchema {
 
     // MARK: - Hotkey presets (validated choices, no key-capture recorder)
 
-    /// Single keys that can hold-to-talk. Names match config.py `KEYCODES`.
+    /// Single keys that can hold-to-talk. Names match config.py `KEYCODES`,
+    /// plus the two mouse side buttons the Swift engine alone understands
+    /// (#191; the Python engine would reject them and fall back to Fn).
     static let pttPresets = [
         "fn", "right_option", "left_option", "right_command", "right_control", "right_shift",
+        "mouse4", "mouse5",
     ]
+    private static let mouseButtonLabels = ["mouse4": "mouse button 4", "mouse5": "mouse button 5"]
     /// "modifier+key" combos for hands-free toggle.
     static let togglePresets = ["fn+space", "right_option+space", "left_option+space"]
     /// Cancel key; "" disables the discard gesture.
@@ -90,7 +94,8 @@ enum SettingsSchema {
 
     /// Human label for a key token in a dropdown ("" shows as "None").
     static func keyLabel(_ token: String) -> String {
-        token.isEmpty ? "None" : token.replacingOccurrences(of: "_", with: " ")
+        if token.isEmpty { return "None" }
+        return mouseButtonLabels[token] ?? token.replacingOccurrences(of: "_", with: " ")
     }
 
     // MARK: - Hotkey conflict warnings (advisory — never block the save)
