@@ -47,7 +47,7 @@ line 2 = owner) enforces mutual exclusion, so there is always a single writer to
 ## Native pipeline (`Pomvox/Sources/Engine/`)
 
 ```
-[Fn held / Fn+Space]                      EventTap (CGEventTap, flagsChanged)
+[Fn or mouse4/5 held / Fn+Space]          EventTap (CGEventTap, flagsChanged + side buttons)
    │                                       → HotkeyMachine (pure, unit-tested)
    ▼
 [Mic capture] ── 16 kHz mono Float ──►     AudioCapture (AVAudioEngine)

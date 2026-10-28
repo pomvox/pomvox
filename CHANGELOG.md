@@ -7,6 +7,19 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 
 ## [Unreleased]
 
+### Added
+
+- **Settings ▸ Models lists every downloaded model and can remove the unused
+  ones.** Each model on disk shows with its size; the ones your settings name
+  are marked "in use" and can't be removed. "Remove unused models" asks first,
+  says how much it frees, and waits while a model is downloading or loading. (#100)
+- **Hold a mouse side button to dictate.** *Settings → Hotkeys → Hold to talk*
+  now offers *mouse button 4* and *mouse button 5* next to Fn and the modifier
+  keys (`[hotkey] ptt = "mouse4"` or `"mouse5"`). Hold to talk, release to
+  paste, exactly like Fn; `toggle = "mouse4+space"` gives hands-free. While the
+  engine is on the chosen button belongs to Pomvox, so it no longer goes Back
+  or Forward in a browser. Fn stays the default and is unchanged. (#191)
+
 ### Changed
 
 - **History's "Fix a misheard word…" button looks like its neighbours.** It

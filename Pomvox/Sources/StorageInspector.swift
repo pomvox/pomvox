@@ -68,7 +68,9 @@ enum StorageInspector {
         return size
     }
 
-    private static func directorySize(_ path: String) -> Int64 {
+    /// Recursive sum of regular files; symlinks (the hub's snapshot entries)
+    /// are not followed, so a blob counts once. Shared with `DownloadedModels`.
+    static func directorySize(_ path: String) -> Int64 {
         let url = URL(fileURLWithPath: path)
         guard let e = FileManager.default.enumerator(
             at: url, includingPropertiesForKeys: [.fileSizeKey, .isRegularFileKey]) else { return 0 }

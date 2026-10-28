@@ -59,6 +59,9 @@ review, copy, and re-insert recovery.
 - [`uv`](https://docs.astral.sh/uv/) — only for the Python reference engine and
   the test suite
 
+Not sure it fits? [Who Pomvox is for](docs/comparison.md) lists every
+capability of the shipped build, and who it is not for, in one table.
+
 ## Download
 
 ### Homebrew

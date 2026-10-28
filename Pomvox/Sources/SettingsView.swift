@@ -442,7 +442,82 @@ private struct ModelsPane: View {
                 }
             }
             PaneNote("Any Hugging Face MLX model id works for cleanup — the dropdown is just suggestions. Download stays on this Mac. A dictation that times out, or turning the engine off, does not cancel it.")
+            DownloadedModelsGroup()
         }
+    }
+}
+
+/// Settings ▸ Models "Downloaded models" (#100): every model on disk with its size, the
+/// saved config's marked in use, and a confirmed "Remove unused" disabled while anything loads.
+private struct DownloadedModelsGroup: View {
+    @EnvironmentObject var model: SettingsModel
+    @EnvironmentObject var engine: NativeEngine
+    @State private var downloaded: [DownloadedModel] = []
+    @State private var kept: [String] = []
+    @State private var confirming = false
+
+    private var unused: [DownloadedModel] { downloaded.filter { !$0.inUse } }
+    private var freed: String { StorageInspector.humanSize(unused.reduce(0) { $0 + $1.bytes }) }
+    private var busy: String? {
+        DownloadedModels.busyReason(engineStatus: engine.status, speechLoad: engine.speechLoad, cleanupPhase: engine.cleanupPhase)
+    }
+    private var desc: String {
+        if !kept.isEmpty { return "Couldn't remove \(kept.joined(separator: ", ")) — the files were left in place." }
+        if let busy { return busy }
+        if unused.isEmpty { return downloaded.isEmpty ? "Nothing downloaded yet." : "Every downloaded model is named in your settings." }
+        return "\(unused.count) not named in your settings, \(freed) on disk."
+    }
+
+    var body: some View {
+        SettingsGroup("Downloaded models") {
+            ForEach(downloaded) { m in
+                HStack(spacing: 12) {
+                    Text(m.id).font(Typo.ui(12.5)).monospaced().foregroundStyle(Palette.ink)
+                    if m.inUse {
+                        Text("IN USE").font(Typo.ui(8.5, .semibold)).tracking(0.5).foregroundStyle(Palette.gold)
+                            .padding(.horizontal, 5).padding(.vertical, 2)
+                            .background(RoundedRectangle(cornerRadius: 4).fill(Palette.gold.opacity(0.14)))
+                    }
+                    Spacer(minLength: 12)
+                    Text(m.sizeText).font(Typo.ui(12.5, .medium)).monospacedDigit().foregroundStyle(Palette.inkSoft)
+                }
+                .padding(.vertical, 10).padding(.horizontal, 16)
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel("\(m.id), \(m.sizeText)\(m.inUse ? ", in use" : "")")
+                RowDivider()
+            }
+            SettingRow(title: "Remove unused models", desc: desc) {
+                Button(role: .destructive) { confirming = true } label: {
+                    Text("Remove…").font(Typo.ui(12.5, .semibold)).foregroundStyle(.white)
+                        .padding(.horizontal, 14).padding(.vertical, 6)
+                        .background(Capsule().fill(Palette.ember))
+                }
+                .buttonStyle(.plain)
+                .disabled(unused.isEmpty || busy != nil)
+                .accessibilityLabel("Remove unused models")
+                .confirmationDialog("Remove \(unused.count) unused model\(unused.count == 1 ? "" : "s")?",
+                                    isPresented: $confirming, titleVisibility: .visible) {
+                    Button("Remove, freeing \(freed)", role: .destructive) { removeUnused() }
+                    Button("Cancel", role: .cancel) {}
+                } message: {
+                    Text("\(unused.map(\.id).joined(separator: ", ")). Models named in your settings stay. A model you pick later is downloaded again.")
+                }
+            }
+        }
+        .onAppear(perform: rescan)
+        .onReceive(NotificationCenter.default.publisher(for: .pomvoxSettingsDidChange)) { _ in rescan() }
+    }
+
+    /// Reads the *saved* config, not the edit buffer: an unsaved edit must not make a model removable.
+    private func rescan() {
+        downloaded = DownloadedModels.scan(sttModel: model.saved.sttModel, cleanupModel: model.saved.cleanupModel)
+    }
+
+    private func removeUnused() {
+        // Re-checked on the main actor: the engine can't re-arm under a synchronous main-actor delete.
+        guard busy == nil else { return }
+        kept = DownloadedModels.remove(unused).kept
+        rescan()
     }
 }
 
@@ -457,7 +532,9 @@ private struct HotkeysPane: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             SettingsGroup("Push to talk") {
-                SettingRow(title: "Hold to talk", restart: true) {
+                SettingRow(title: "Hold to talk",
+                           desc: "A mouse side button is Pomvox's while the engine is on — it won't go Back or Forward.",
+                           restart: true) {
                     KeyPicker(presets: SettingsSchema.pttPresets, selection: $model.values.ptt)
                 }
             }

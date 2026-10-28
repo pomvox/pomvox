@@ -1706,13 +1706,17 @@ final class NativeEngine: ObservableObject {
     /// Build the CGEventTap wired to the HotkeyMachine. Extracted so both arm()
     /// and the wake path (which rebuilds it) use identical decision closures.
     private func makeTap() -> EventTap {
-        EventTap(
+        // Mouse side buttons are subscribed only when PTT is one (#191); a
+        // keyboard PTT gets the tap it always had. Snapshot-at-arm, like the machine.
+        machineLock.lock(); let mouseButtons = machine.pttIsMouseButton; machineLock.unlock()
+        return EventTap(
             onModifier: { [weak self] keycode, isDown in
                 self?.decide(keycode: keycode) { $0.onModifier(keycode, isDown) } ?? HotkeyMachine.Decision()
             },
             onKeyDown: { [weak self] keycode in
                 self?.decide { $0.onKeyDown(keycode) } ?? HotkeyMachine.Decision()
-            })
+            },
+            mouseButtons: mouseButtons)
     }
 
     /// On sleep we reset any in-flight recording (the push-to-talk key-up can be
