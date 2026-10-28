@@ -850,7 +850,7 @@ private struct KeyPicker: View {
     @Binding var selection: String
     var body: some View {
         // Keep any non-preset value the file already had, so we never lose it.
-        let options = presets.contains(selection) ? presets : [selection] + presets
+        let options = SettingsSchema.pickerOptions(presets: presets, selection: selection)
         Menu {
             ForEach(options, id: \.self) { p in
                 Button(SettingsSchema.keyLabel(p)) { selection = p }

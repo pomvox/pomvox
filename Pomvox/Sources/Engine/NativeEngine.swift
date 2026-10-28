@@ -70,6 +70,9 @@ final class NativeEngine: ObservableObject {
 
     // The configured PTT key's display name, for the Setup heartbeat row.
     @Published private(set) var pttDisplayName = HotkeyMachine.displayName("fn")
+    // Whether that PTT is a mouse side button (#191), so Setup's copy can say
+    // "button" and skip the hardware-Fn advice (#196).
+    @Published private(set) var pttIsMouseButton = false
 
     // Hotkey path — touched on the event-tap thread, serialized by the lock.
     // Rebuilt from [hotkey] at every arm() (snapshot-at-arm like [hud]/[cleanup]).
@@ -952,6 +955,7 @@ final class NativeEngine: ObservableObject {
         }
         machineLock.lock(); machine = m; machineLock.unlock()
         pttDisplayName = HotkeyMachine.displayName(fellBack ? "fn" : pttName)
+        pttIsMouseButton = m.pttIsMouseButton
         NSLog("pomvox-engine: hotkeys — ptt=%@", pttDisplayName)
 
         let hudEnabled = doc.bool("hud", "enabled") ?? true

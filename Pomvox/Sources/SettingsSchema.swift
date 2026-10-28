@@ -85,17 +85,31 @@ enum SettingsSchema {
         "mouse4", "mouse5",
     ]
     private static let mouseButtonLabels = ["mouse4": "mouse button 4", "mouse5": "mouse button 5"]
-    /// "modifier+key" combos for hands-free toggle.
-    static let togglePresets = ["fn+space", "right_option+space", "left_option+space"]
+    /// "modifier+key" combos for hands-free toggle. The side-button combos
+    /// pair with a `mouse4`/`mouse5` PTT (#196): hold the button, tap Space.
+    static let togglePresets = [
+        "fn+space", "right_option+space", "left_option+space",
+        "mouse4+space", "mouse5+space",
+    ]
     /// Cancel key; "" disables the discard gesture.
     static let cancelPresets = ["esc", ""]
     /// Optional extra stop key; "" = none (fn tap / the toggle combo always stop).
     static let stopPresets = ["", "right_command", "right_shift"]
 
-    /// Human label for a key token in a dropdown ("" shows as "None").
+    /// Human label for a key token or "modifier+key" combo in a dropdown
+    /// ("" shows as "None"; each part of a combo is labelled on its own).
     static func keyLabel(_ token: String) -> String {
         if token.isEmpty { return "None" }
-        return mouseButtonLabels[token] ?? token.replacingOccurrences(of: "_", with: " ")
+        return token.split(separator: "+", omittingEmptySubsequences: false).map {
+            let part = String($0)
+            return mouseButtonLabels[part] ?? part.replacingOccurrences(of: "_", with: " ")
+        }.joined(separator: "+")
+    }
+
+    /// What a key picker lists: the presets, plus the current value if it
+    /// isn't one of them, so a hand-edited binding in the file is never lost.
+    static func pickerOptions(presets: [String], selection: String) -> [String] {
+        presets.contains(selection) ? presets : [selection] + presets
     }
 
     // MARK: - Hotkey conflict warnings (advisory — never block the save)
@@ -108,11 +122,19 @@ enum SettingsSchema {
         // ENTER_TOGGLE fires only while the PTT key is held AND the toggle's
         // modifier is down (hotkey.py on_key_down). If the modifier isn't the
         // PTT key, you can't reach hands-free one-handed.
-        let toggleMod = c.toggle.split(separator: "+").first.map(String.init) ?? ""
+        let toggleParts = c.toggle.split(separator: "+").map(String.init)
+        let toggleMod = toggleParts.first ?? ""
         if !toggleMod.isEmpty, toggleMod != c.ptt {
-            out.append(
+            var warning =
                 "Toggle uses \(keyLabel(toggleMod)) but push-to-talk is \(keyLabel(c.ptt)) — "
-                + "you can't switch to hands-free without also pressing \(keyLabel(toggleMod)).")
+                + "you can't switch to hands-free without also pressing \(keyLabel(toggleMod))."
+            // Say what to pick when the picker offers the matching combo
+            // (a side-button PTT wants the side-button toggle, #196).
+            if let key = toggleParts.dropFirst().first,
+               togglePresets.contains("\(c.ptt)+\(key)") {
+                warning += " Try \(keyLabel("\(c.ptt)+\(key)"))."
+            }
+            out.append(warning)
         }
 
         // The discard key can't double as the key that starts dictation.

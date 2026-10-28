@@ -16,6 +16,12 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
   engine is on the chosen button belongs to Pomvox, so it no longer goes Back
   or Forward in a browser. Fn stays the default and is unchanged. (#191)
 
+- **Hands-free from a side button, without editing a file.** *Toggle
+  hands-free* now offers *mouse button 4+space* and *mouse button 5+space*.
+  With a side button as push-to-talk, the Hotkeys warning about a mismatched
+  toggle suggests that combo, and the Setup heartbeat talks about a button
+  instead of a keyboard key. (#196)
+
 ## [0.2.9] — 2026-09-27
 
 ### Changed
