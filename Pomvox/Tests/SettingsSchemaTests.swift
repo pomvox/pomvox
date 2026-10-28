@@ -83,6 +83,23 @@ final class SettingsSchemaTests: XCTestCase {
         XCTAssertFalse(SettingsSchema.hotkeyConflicts(c).isEmpty)
     }
 
+    // MARK: push-to-talk presets (#191: side mouse buttons, Swift-only)
+
+    /// Fn stays the default and the first choice; the two side buttons are
+    /// offered after the keyboard keys and read as buttons, not keys.
+    func testPttPresetsOfferTheSideMouseButtonsAfterFn() {
+        XCTAssertEqual(SettingsSchema.pttPresets.first, "fn")
+        XCTAssertEqual(SettingsSchema.pttPresets.suffix(2), ["mouse4", "mouse5"])
+        XCTAssertEqual(SettingsSchema.keyLabel("mouse4"), "mouse button 4")
+        XCTAssertEqual(SettingsSchema.keyLabel("mouse5"), "mouse button 5")
+        XCTAssertEqual(SettingsSchema.keyLabel("right_option"), "right option")
+        // Every preset must be a binding the engine accepts, or the picker
+        // would offer a value that silently falls back to Fn.
+        for p in SettingsSchema.pttPresets {
+            XCTAssertNoThrow(try HotkeyMachine(ptt: p), p)
+        }
+    }
+
     // MARK: cleanup model presets
 
     func testTheDefaultCleanupModelIsOfferedAsAPreset() {

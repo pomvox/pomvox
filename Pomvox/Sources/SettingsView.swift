@@ -457,7 +457,9 @@ private struct HotkeysPane: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             SettingsGroup("Push to talk") {
-                SettingRow(title: "Hold to talk", restart: true) {
+                SettingRow(title: "Hold to talk",
+                           desc: "A mouse side button is Pomvox's while the engine is on — it won't go Back or Forward.",
+                           restart: true) {
                     KeyPicker(presets: SettingsSchema.pttPresets, selection: $model.values.ptt)
                 }
             }
