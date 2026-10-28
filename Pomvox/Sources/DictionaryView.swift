@@ -87,7 +87,7 @@ struct DictionaryView: View {
                 .accessibilityLabel("New fixup rule")
             }
             if store.file.rules.isEmpty {
-                Text("No rules yet. Add one here, or select a mistake in History and choose “Fix this…”.")
+                Text("No rules yet. Add one here, or select a mistake in History and choose “Fix a misheard word…”.")
                     .font(Typo.ui(12.5)).foregroundStyle(Palette.muted)
             }
             ForEach(store.file.rules) { rule in

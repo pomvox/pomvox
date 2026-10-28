@@ -9,6 +9,10 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 
 ### Added
 
+- **Settings ▸ Models lists every downloaded model and can remove the unused
+  ones.** Each model on disk shows with its size; the ones your settings name
+  are marked "in use" and can't be removed. "Remove unused models" asks first,
+  says how much it frees, and waits while a model is downloading or loading. (#100)
 - **Hold a mouse side button to dictate.** *Settings → Hotkeys → Hold to talk*
   now offers *mouse button 4* and *mouse button 5* next to Fn and the modifier
   keys (`[hotkey] ptt = "mouse4"` or `"mouse5"`). Hold to talk, release to
@@ -21,6 +25,15 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
   With a side button as push-to-talk, the Hotkeys warning about a mismatched
   toggle suggests that combo, and the Setup heartbeat talks about a button
   instead of a keyboard key. (#196)
+
+### Changed
+
+- **History's "Fix a misheard word…" button looks like its neighbours.** It
+  now has the same bordered, hover-tinted 26-point target as Copy, Re-insert
+  and Delete, and the Dictionary page's empty state calls it by the same name.
+- **A bad quick-add hotkey says which key it didn't understand.** Settings
+  now reads "Unknown key “f1”" or "Unknown modifier “foo”" instead of a
+  generic message, and a trailing "+" is reported as a missing key.
 
 ## [0.2.9] — 2026-09-27
 
