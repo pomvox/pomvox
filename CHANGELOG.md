@@ -20,6 +20,15 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
   engine is on the chosen button belongs to Pomvox, so it no longer goes Back
   or Forward in a browser. Fn stays the default and is unchanged. (#191)
 
+### Changed
+
+- **History's "Fix a misheard word…" button looks like its neighbours.** It
+  now has the same bordered, hover-tinted 26-point target as Copy, Re-insert
+  and Delete, and the Dictionary page's empty state calls it by the same name.
+- **A bad quick-add hotkey says which key it didn't understand.** Settings
+  now reads "Unknown key “f1”" or "Unknown modifier “foo”" instead of a
+  generic message, and a trailing "+" is reported as a missing key.
+
 ## [0.2.9] — 2026-09-27
 
 ### Changed

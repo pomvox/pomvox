@@ -331,12 +331,11 @@ struct DictationRow: View {
                 reinserter.start(text: dictation.final)
             }
             if let onFix {
-                Button { onFix(dictation) } label: {
-                    Image(systemName: "character.book.closed")
+                // Same wording as the Dictionary page's empty state, which
+                // tells the user to come here and choose it.
+                RowButton(symbol: "character.book.closed", label: "Fix a misheard word…") {
+                    onFix(dictation)
                 }
-                .buttonStyle(.plain).foregroundStyle(Palette.muted)
-                .help("Fix a misheard word…")
-                .accessibilityLabel("Fix a misheard word from this dictation")
             }
             if showDelete {
                 RowButton(symbol: "trash", label: "Delete", danger: true) { model.delete(dictation) }
