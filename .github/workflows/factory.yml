@@ -11,6 +11,8 @@ on:
     types: [created]
   pull_request:
     types: [opened, reopened, synchronize, labeled, closed]
+  push:
+    branches: [main]   # main moved: the factory checks open agent-loop PRs for merge conflicts
 
 permissions: {}
 
@@ -37,6 +39,7 @@ jobs:
             if $e.event == "issues" then (["proposal","loop-suggested","agent-suggested","agent-ready"] | index($e.label)) != null
             elif $e.event == "issue_comment" then ($e.issue.is_pr | not) and (($e.issue.labels | map(select(. == "proposal" or . == "loop-suggested" or . == "agent-suggested" or . == "needs-human" or . == "agent-ready")) | length) > 0)
             elif $e.event == "pull_request" then (($e.pr.labels | index("agent-loop")) != null) or ((["agent-loop","eval-pass","sec-pass"] | index($e.label)) != null)
+            elif $e.event == "push" then true
             else false end')
           if [ "$want" != "true" ]; then echo "not a factory event; nothing forwarded"; exit 0; fi
           jq -n --argjson p "$payload" '{event_type: "factory", client_payload: $p}' \
