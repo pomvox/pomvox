@@ -1,5 +1,5 @@
 # Drop this file into .github/workflows/factory.yml of each portfolio repo.
-# It is a relay and nothing else: it forwards issue and PR events to the private
+# It is a relay and nothing else: it forwards issue, PR, push and release events to the private
 # factory repo (pomvox/pomvox_factory), where every agent runs. GitHub does not let a
 # public repo call reusable workflows in a private one, so the work cannot run here.
 # Needs one repo secret: FACTORY_GH_TOKEN (a token that can dispatch to pomvox_factory).
@@ -13,6 +13,8 @@ on:
     types: [opened, reopened, synchronize, labeled, closed]
   push:
     branches: [main]   # main moved: the factory checks open agent-loop PRs for merge conflicts
+  release:
+    types: [published]   # a published release: the factory drafts changelog and Reddit copy into the vault
 
 permissions: {}
 
@@ -32,7 +34,8 @@ jobs:
             label: (.label.name // ""),
             issue: (if .issue then {number: .issue.number, labels: [.issue.labels[].name], is_pr: (.issue.pull_request != null)} else null end),
             comment: (if .comment then {body: .comment.body[0:1000], association: .comment.author_association} else null end),
-            pr: (if .pull_request then {number: .pull_request.number, head_sha: .pull_request.head.sha, base: .pull_request.base.ref, labels: [.pull_request.labels[].name], merged: (.pull_request.merged // false)} else null end)
+            pr: (if .pull_request then {number: .pull_request.number, head_sha: .pull_request.head.sha, base: .pull_request.base.ref, labels: [.pull_request.labels[].name], merged: (.pull_request.merged // false)} else null end),
+            release: (if .release then {tag: .release.tag_name, name: .release.name, draft: .release.draft, prerelease: .release.prerelease, url: .release.html_url} else null end)
           }' "$GITHUB_EVENT_PATH")
           # Forward only what the factory listens for. Everything else stays quiet.
           want=$(printf '%s' "$payload" | jq -r '. as $e |
@@ -40,6 +43,7 @@ jobs:
             elif $e.event == "issue_comment" then ($e.issue.is_pr | not) and (($e.issue.labels | map(select(. == "proposal" or . == "loop-suggested" or . == "agent-suggested" or . == "needs-human" or . == "agent-ready")) | length) > 0)
             elif $e.event == "pull_request" then (($e.pr.labels | index("agent-loop")) != null) or ((["agent-loop","eval-pass","sec-pass"] | index($e.label)) != null)
             elif $e.event == "push" then true
+            elif $e.event == "release" then ($e.action == "published") and (($e.release.draft or $e.release.prerelease) | not)
             else false end')
           if [ "$want" != "true" ]; then echo "not a factory event; nothing forwarded"; exit 0; fi
           jq -n --argjson p "$payload" '{event_type: "factory", client_payload: $p}' \
