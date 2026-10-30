@@ -95,6 +95,15 @@ final class HotkeyMachine {
         return displayNames[key] ?? configName
     }
 
+    /// The same, for a `modifier+key` combo such as the hands-free toggle:
+    /// each part is named on its own and joined with " + " (#212). A combo
+    /// without a "+" is a single name; unknown parts echo through as above.
+    static func comboDisplayName(_ configCombo: String) -> String {
+        configCombo.split(separator: "+", omittingEmptySubsequences: false)
+            .map { displayName(String($0)) }
+            .joined(separator: " + ")
+    }
+
     /// Build from `[hotkey]` config, degrading to the Fn defaults on any invalid
     /// value (#58): dictation must never brick over a typo in config.toml. The
     /// `fellBack` flag lets the caller log which bindings were rejected.

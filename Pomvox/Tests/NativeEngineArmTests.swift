@@ -23,9 +23,9 @@ final class NativeEngineArmTests: XCTestCase {
     }
 
     /// Cleanup is off so the arm never schedules a pack or weights download.
-    private func engine(ptt: String) throws -> NativeEngine {
+    private func engine(ptt: String, toggle: String = "fn+space") throws -> NativeEngine {
         let path = dir.appendingPathComponent("config.toml").path
-        try "[hotkey]\nptt = \"\(ptt)\"\n\n[cleanup]\nenabled = false\n"
+        try "[hotkey]\nptt = \"\(ptt)\"\ntoggle = \"\(toggle)\"\n\n[cleanup]\nenabled = false\n"
             .write(toFile: path, atomically: true, encoding: .utf8)
         return NativeEngine(
             configPath: path,
@@ -59,9 +59,32 @@ final class NativeEngineArmTests: XCTestCase {
     /// An unknown button falls back to the Fn defaults (HotkeyMachine.resolved);
     /// the mirror follows the machine that was actually built, not the typed value.
     func testArmFallbackFromUnknownButtonIsNotMouse() async throws {
-        let e = try engine(ptt: "mouse6")
+        let e = try engine(ptt: "mouse6", toggle: "mouse6+space")
         await e.arm(interactive: false)
         XCTAssertFalse(e.pttIsMouseButton)
         XCTAssertEqual(e.pttDisplayName, HotkeyMachine.displayName("fn"))
+        // The whole [hotkey] table falls back together, so the toggle mirror
+        // names the default combo too — not the "mouse6+space" the file said.
+        XCTAssertEqual(e.toggleDisplayName, HotkeyMachine.comboDisplayName("fn+space"))
+    }
+
+    /// The sidebar status card reads the toggle mirror next to the PTT one
+    /// (#212): `toggle = "mouse4+space"` reaches it as the configured combo.
+    func testArmMirrorsToggleComboForSidebar() async throws {
+        let e = try engine(ptt: "mouse4", toggle: "mouse4+space")
+        XCTAssertEqual(e.toggleDisplayName, HotkeyMachine.comboDisplayName("fn+space"))  // pre-arm default
+        await e.arm(interactive: false)
+        XCTAssertEqual(e.toggleDisplayName, "Mouse Button 4 + Space")
+        XCTAssertEqual(e.pttDisplayName, "Mouse Button 4")
+    }
+
+    /// A valid PTT with an invalid toggle still falls back as a whole (the
+    /// machine is Fn/Fn+Space), and both mirrors say so.
+    func testArmFallbackFromBadToggleResetsBothMirrors() async throws {
+        let e = try engine(ptt: "mouse4", toggle: "space")   // no "+": badToggle
+        await e.arm(interactive: false)
+        XCTAssertFalse(e.pttIsMouseButton)
+        XCTAssertEqual(e.pttDisplayName, HotkeyMachine.displayName("fn"))
+        XCTAssertEqual(e.toggleDisplayName, HotkeyMachine.comboDisplayName("fn+space"))
     }
 }

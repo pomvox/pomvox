@@ -247,6 +247,17 @@ final class HotkeyMachineTests: XCTestCase {
         XCTAssertEqual(HotkeyMachine.displayName("mouse5"), "Mouse Button 5")
     }
 
+    /// The hands-free combo for the sidebar status card (#212): each part named
+    /// like `displayName`, joined with " + "; a bare key or an unknown part
+    /// behaves exactly as `displayName` does.
+    func testComboDisplayNames() {
+        XCTAssertEqual(HotkeyMachine.comboDisplayName("fn+space"), "Fn (🌐) + Space")
+        XCTAssertEqual(HotkeyMachine.comboDisplayName("mouse4+space"), "Mouse Button 4 + Space")
+        XCTAssertEqual(HotkeyMachine.comboDisplayName("right_option+space"), "Right Option (⌥) + Space")
+        XCTAssertEqual(HotkeyMachine.comboDisplayName("fn"), "Fn (🌐)")          // no "+": single name
+        XCTAssertEqual(HotkeyMachine.comboDisplayName("weird+space"), "weird + Space")  // unknown echoes
+    }
+
     // MARK: - mouse side buttons as PTT (#191, Swift-only; not in the Python spec)
 
     let MOUSE4 = HotkeyMachine.keycodes["mouse4"]!
