@@ -143,6 +143,20 @@ final class SettingsSchemaTests: XCTestCase {
         XCTAssertTrue(SettingsSchema.hotkeyConflicts(c5)[0].contains("mouse button 5+space"))
     }
 
+    /// The suggestion is for side-button PTTs only (#213): a keyboard PTT
+    /// keeps the plain mismatched-toggle warning it had before #196, even
+    /// though `fn+space` is a preset the picker offers.
+    func testToggleModifierDifferentFromKeyboardPTTHasNoSuggestion() {
+        let c = HotkeyChoice(ptt: "fn", toggle: "right_option+space", stop: "", cancel: "esc")
+        let warnings = SettingsSchema.hotkeyConflicts(c)
+        XCTAssertEqual(warnings.count, 1)
+        XCTAssertTrue(warnings[0].contains("Toggle uses right option but push-to-talk is fn"),
+                      warnings[0])
+        XCTAssertFalse(warnings[0].contains("Try"), warnings[0])
+        let option = HotkeyChoice(ptt: "right_option", toggle: "fn+space", stop: "", cancel: "esc")
+        XCTAssertFalse(SettingsSchema.hotkeyConflicts(option)[0].contains("Try"))
+    }
+
     /// Only a toggle the picker offers is suggested; a PTT with no matching
     /// preset keeps the plain warning rather than inventing a combo.
     func testNoSuggestionWhenNoMatchingTogglePresetExists() {

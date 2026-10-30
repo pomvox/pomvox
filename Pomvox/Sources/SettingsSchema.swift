@@ -114,6 +114,12 @@ enum SettingsSchema {
 
     // MARK: - Hotkey conflict warnings (advisory — never block the save)
 
+    /// Whether a PTT config name is a mouse side button, by the engine's own
+    /// keycode predicate; an unknown name is not a button.
+    private static func pttIsMouseButton(_ ptt: String) -> Bool {
+        HotkeyMachine.keycodes[ptt].map(HotkeyMachine.isMouseButton) ?? false
+    }
+
     /// Flags binding choices that fight the engine's state machine. These are
     /// warnings, not errors: the user can still save, but we say why it's odd.
     static func hotkeyConflicts(_ c: HotkeyChoice) -> [String] {
@@ -128,9 +134,12 @@ enum SettingsSchema {
             var warning =
                 "Toggle uses \(keyLabel(toggleMod)) but push-to-talk is \(keyLabel(c.ptt)) — "
                 + "you can't switch to hands-free without also pressing \(keyLabel(toggleMod))."
-            // Say what to pick when the picker offers the matching combo
-            // (a side-button PTT wants the side-button toggle, #196).
+            // Say what to pick when the picker offers the matching combo, but
+            // only for a side-button PTT (#196, #213): that is the one case
+            // where the fix isn't obvious. A keyboard PTT keeps the plain
+            // warning rather than "Try fn+space." as a hint.
             if let key = toggleParts.dropFirst().first,
+               pttIsMouseButton(c.ptt),
                togglePresets.contains("\(c.ptt)+\(key)") {
                 warning += " Try \(keyLabel("\(c.ptt)+\(key)"))."
             }
