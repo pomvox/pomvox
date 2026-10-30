@@ -55,7 +55,7 @@ review, copy, and re-insert recovery.
 
 - Apple Silicon Mac (reference hardware: M1, 16 GB), macOS 14+
 - [Xcode](https://developer.apple.com/xcode/) (full app, not just Command Line
-  Tools) and [`xcodegen`](https://github.com/yonsm/XcodeGen) — `brew install xcodegen`
+  Tools) and [`xcodegen`](https://github.com/yonaskolb/XcodeGen) — `brew install xcodegen`
 - [`uv`](https://docs.astral.sh/uv/) — only for the Python reference engine and
   the test suite
 
