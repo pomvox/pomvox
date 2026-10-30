@@ -23,7 +23,9 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
   hands-free* now offers *mouse button 4+space* and *mouse button 5+space*.
   With a side button as push-to-talk, the Hotkeys warning about a mismatched
   toggle suggests that combo, and the Setup heartbeat talks about a button
-  instead of a keyboard key. (#196)
+  instead of a keyboard key. (#196) The suggestion is for side-button
+  push-to-talk only; with a keyboard key such as Fn the warning reads as
+  before. (#213)
 
 ### Changed
 
