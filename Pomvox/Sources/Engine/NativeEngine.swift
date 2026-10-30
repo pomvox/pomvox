@@ -68,8 +68,12 @@ final class NativeEngine: ObservableObject {
     // from "events arrive, problem is downstream".
     @Published private(set) var lastPttSeenAt: Date?
 
-    // The configured PTT key's display name, for the Setup heartbeat row.
+    // The configured PTT key's display name, for the Setup heartbeat row and
+    // the sidebar status card.
     @Published private(set) var pttDisplayName = HotkeyMachine.displayName("fn")
+    // The configured hands-free combo's display name, for the sidebar status
+    // card (#212). Set together with `pttDisplayName` at every arm.
+    @Published private(set) var toggleDisplayName = HotkeyMachine.comboDisplayName("fn+space")
     // Whether that PTT is a mouse side button (#191), so Setup's copy can say
     // "button" and skip the hardware-Fn advice (#196).
     @Published private(set) var pttIsMouseButton = false
@@ -957,18 +961,23 @@ final class NativeEngine: ObservableObject {
         // [hotkey] (#58): rebuild the machine from config. Settings' Hotkeys
         // pane rows are marked restart:true — snapshot-at-arm is the contract.
         let pttName = doc.string("hotkey", "ptt") ?? "fn"
+        let toggleName = doc.string("hotkey", "toggle") ?? "fn+space"
         let (m, fellBack) = HotkeyMachine.resolved(
             ptt: pttName,
-            toggle: doc.string("hotkey", "toggle") ?? "fn+space",
+            toggle: toggleName,
             stop: doc.string("hotkey", "stop") ?? "",
             cancel: doc.string("hotkey", "cancel") ?? "esc")
         if fellBack {
             NSLog("pomvox-engine: invalid [hotkey] config — using Fn defaults")
         }
         machineLock.lock(); machine = m; machineLock.unlock()
+        // The mirrors follow the machine that was built: a fallback names the
+        // Fn defaults, not what the file said, so the UI never promises a key
+        // the tap isn't listening for.
         pttDisplayName = HotkeyMachine.displayName(fellBack ? "fn" : pttName)
+        toggleDisplayName = HotkeyMachine.comboDisplayName(fellBack ? "fn+space" : toggleName)
         pttIsMouseButton = m.pttIsMouseButton
-        NSLog("pomvox-engine: hotkeys — ptt=%@", pttDisplayName)
+        NSLog("pomvox-engine: hotkeys — ptt=%@ toggle=%@", pttDisplayName, toggleDisplayName)
 
         let hudEnabled = doc.bool("hud", "enabled") ?? true
         hud.applyConfig(

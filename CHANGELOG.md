@@ -34,6 +34,15 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
   now reads "Unknown key “f1”" or "Unknown modifier “foo”" instead of a
   generic message, and a trailing "+" is reported as a missing key.
 
+### Fixed
+
+- **The sidebar status card names your actual hotkeys.** It used to say
+  "Hold Fn · or Fn + Space" whatever *Settings → Hotkeys* said; with a mouse
+  side button or a modifier key as push-to-talk it now reads, for example,
+  "Hold Mouse Button 4 · or Mouse Button 4 + Space", the same names Setup
+  uses. While the engine is off, loading, blocked or needs attention the card
+  says that instead of "Ready to dictate". (#212)
+
 ## [0.2.9] — 2026-09-27
 
 ### Changed
