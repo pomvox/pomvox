@@ -7,6 +7,8 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 
 ## [Unreleased]
 
+## [0.2.10] — 2026-10-30
+
 ### Added
 
 - **Settings ▸ Models lists every downloaded model and can remove the unused
@@ -35,6 +37,16 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 - **A bad quick-add hotkey says which key it didn't understand.** Settings
   now reads "Unknown key “f1”" or "Unknown modifier “foo”" instead of a
   generic message, and a trailing "+" is reported as a missing key.
+- **Anonymous usage stats are on by default.** The first-launch "Share /
+  No thanks" screen is gone. The stats stay content-free (a random per-install
+  ID, counts and timings; never text or audio) and *Settings → Privacy* turns
+  them off at once, dropping anything still queued. If you turned them off in
+  an earlier version, that choice is kept. `PRIVACY.md` lists exactly what is
+  sent. (#171)
+- **The cleanup engine arrives as a versioned package.** The app now depends
+  on pomvox-cleanup-mlx 0.1.0-beta.2 instead of a vendored copy of the engine,
+  and CI checks that the bundled cleanup-pack manifest is byte-identical to the
+  one at that pinned tag. Cleanup itself is unchanged. (#179, #181)
 
 ### Fixed
 
@@ -44,6 +56,19 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
   "Hold Mouse Button 4 · or Mouse Button 4 + Space", the same names Setup
   uses. While the engine is off, loading, blocked or needs attention the card
   says that instead of "Ready to dictate". (#212)
+- **Two pastes no longer fight over the clipboard.** Dictation, *Re-insert*
+  from History and the copy-only fallback now take turns owning the clipboard,
+  and a cancelled or superseded dictation never pastes late into whatever field
+  is focused by then. When a paste can't be verified the prompt reads "Paste
+  attempted — check your text field before pasting again" and the text stays
+  on the clipboard. (#184)
+- **"3 d printing" keeps its 3.** Dictionary variants that start with a digit
+  were read as numbered-list markers and lost it; only real bullets and
+  "1." / "1)" markers are stripped now. (#168)
+- **The Dictionary page says when the dictionary is off.** With
+  `[dictionary] enabled = false` the page and quick-add behaved as if the rules
+  were live; now the page says the feature is off and the test box previews
+  what dictation will actually paste. (#170)
 
 ## [0.2.9] — 2026-09-27
 
@@ -719,7 +744,8 @@ on Apple Silicon, shipping as a signed, notarized `Pomvox.dmg`.
 - **Python reference engine** (`src/pomvox/`) — the original app, now frozen as a
   runnable reference whose pure-logic modules are the cross-checked test spec.
 
-[Unreleased]: https://github.com/pomvox/pomvox/compare/v0.2.9...HEAD
+[Unreleased]: https://github.com/pomvox/pomvox/compare/v0.2.10...HEAD
+[0.2.10]: https://github.com/pomvox/pomvox/compare/v0.2.9...v0.2.10
 [0.2.9]: https://github.com/pomvox/pomvox/compare/v0.2.8...v0.2.9
 [0.2.8]: https://github.com/pomvox/pomvox/compare/v0.2.7...v0.2.8
 [0.2.7]: https://github.com/pomvox/pomvox/compare/v0.2.6...v0.2.7
