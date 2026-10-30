@@ -95,22 +95,24 @@ struct SetupView: View {
         .overlay(RoundedRectangle(cornerRadius: 12).stroke(Palette.hair, lineWidth: 0.5))
     }
 
-    // Hotkey heartbeat: proves the dictation key physically reaches the app.
-    // Green within 10 s of a press; the hint covers the two known silent
-    // worlds (hardware Fn keys, missing relaunch after a grant).
+    // Hotkey heartbeat: proves the dictation key (or side button) physically
+    // reaches the app. Green within 10 s of a press; the hint covers the known
+    // silent worlds (hardware Fn keys / a utility owning the mouse button,
+    // missing relaunch after a grant). Copy comes from OnboardingFlow.
     private var heartbeatCard: some View {
         TimelineView(.periodic(from: .now, by: 1.0)) { context in
             let seen = engine.lastPttSeenAt.map {
                 context.date.timeIntervalSince($0) < 10.0 } ?? false
+            let prompt = OnboardingFlow.heartbeatPrompt(
+                pttName: engine.pttDisplayName, pttIsMouseButton: engine.pttIsMouseButton)
             HStack(alignment: .center, spacing: 12) {
                 Image(systemName: seen ? "checkmark.circle.fill" : "circle.dashed")
                     .foregroundStyle(seen ? .green : Palette.muted)
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(seen ? "Hotkey working — \(engine.pttDisplayName) reaches Pomvox"
-                              : "Press \(engine.pttDisplayName) to test your dictation key")
+                    Text(seen ? "Hotkey working — \(engine.pttDisplayName) reaches Pomvox" : prompt)
                         .font(Typo.ui(13.5, .semibold)).foregroundStyle(Palette.ink)
                     if !seen {
-                        Text("No key event? Some keyboards handle this key in hardware and never send it to macOS — pick a different key in Settings ▸ Hotkeys (turn the engine off and on to apply). Just granted Input Monitoring? Relaunch Pomvox.")
+                        Text(OnboardingFlow.heartbeatHint(pttIsMouseButton: engine.pttIsMouseButton))
                             .font(Typo.ui(11.5)).foregroundStyle(Palette.muted)
                     }
                 }
@@ -118,8 +120,7 @@ struct SetupView: View {
             }
             .padding(.horizontal, 16).padding(.vertical, 12)
             .accessibilityElement(children: .combine)
-            .accessibilityLabel(seen ? "Hotkey working, \(engine.pttDisplayName) reaches Pomvox"
-                                     : "Press \(engine.pttDisplayName) to test your dictation key")
+            .accessibilityLabel(seen ? "Hotkey working, \(engine.pttDisplayName) reaches Pomvox" : prompt)
         }
         .background(RoundedRectangle(cornerRadius: 12).fill(Palette.pane))
         .overlay(RoundedRectangle(cornerRadius: 12).stroke(Palette.hair, lineWidth: 0.5))

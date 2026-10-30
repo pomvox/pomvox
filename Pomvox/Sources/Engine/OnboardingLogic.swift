@@ -50,6 +50,24 @@ struct OnboardingFlow {
         + "and add it back."
     static let selfTestText = "Pomvox works! 🎉"
 
+    /// Hotkey heartbeat headline while no press has been seen. A side-button
+    /// PTT (#191) is a button, not a key, so the copy says so (#196).
+    static func heartbeatPrompt(pttName: String, pttIsMouseButton: Bool) -> String {
+        "Press \(pttName) to test your dictation \(pttIsMouseButton ? "button" : "key")"
+    }
+
+    /// Hint under that headline: the known silent world for each kind of
+    /// PTT (hardware Fn keys; a mouse utility owning the side button), then
+    /// the two recovery steps both share.
+    static func heartbeatHint(pttIsMouseButton: Bool) -> String {
+        let silentWorld = pttIsMouseButton
+            ? "No click event? A mouse driver or utility may handle this button itself and never send it to macOS — pick a different button or key"
+            : "No key event? Some keyboards handle this key in hardware and never send it to macOS — pick a different key"
+        return silentWorld
+            + " in Settings ▸ Hotkeys (turn the engine off and on to apply). "
+            + "Just granted Input Monitoring? Relaunch Pomvox."
+    }
+
     struct Row: Equatable {
         let key: String
         let title: String

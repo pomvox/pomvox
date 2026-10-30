@@ -70,6 +70,9 @@ final class NativeEngine: ObservableObject {
 
     // The configured PTT key's display name, for the Setup heartbeat row.
     @Published private(set) var pttDisplayName = HotkeyMachine.displayName("fn")
+    // Whether that PTT is a mouse side button (#191), so Setup's copy can say
+    // "button" and skip the hardware-Fn advice (#196).
+    @Published private(set) var pttIsMouseButton = false
 
     // Hotkey path — touched on the event-tap thread, serialized by the lock.
     // Rebuilt from [hotkey] at every arm() (snapshot-at-arm like [hud]/[cleanup]).
@@ -79,7 +82,13 @@ final class NativeEngine: ObservableObject {
     private nonisolated let machineLock = NSLock()
     private nonisolated(unsafe) var stopAt: CFAbsoluteTime = 0  // t0 for paste latency
 
-    private let pidfile = Pidfile()
+    // The three OS-facing gates arm() passes before it owns anything: the
+    // on-disk lock, the TCC grants, the CGEventTap. Injected at init (default:
+    // the real ones) so arm() can be driven in a test without a grant, a live
+    // tap, or a collision with a running app (NativeEngineArmTests).
+    private let pidfile: Pidfile
+    private let permissionsGranted: () -> Bool
+    private let startTap: (EventTap) throws -> Void
     private let capture = AudioCapture()
     private let transcriber = Transcriber()
     private let cleanup = CleanupEngine()
@@ -224,8 +233,14 @@ final class NativeEngine: ObservableObject {
     // it completes (the arm-installed tap may have died across the deep sleep).
     private var pendingTapRecreate = false
 
-    init(configPath: String = SettingsModel.defaultPath()) {
+    init(configPath: String = SettingsModel.defaultPath(),
+         pidfile: Pidfile = Pidfile(),
+         permissionsGranted: @escaping () -> Bool = Permissions.allGranted,
+         startTap: @escaping (EventTap) throws -> Void = { try $0.start() }) {
         self.configPath = configPath
+        self.pidfile = pidfile
+        self.permissionsGranted = permissionsGranted
+        self.startTap = startTap
         self.machine = try! HotkeyMachine()  // fixed Fn push-to-talk bindings
         let hud = HudController()
         self.hud = hud
@@ -291,7 +306,7 @@ final class NativeEngine: ObservableObject {
                 [kAXTrustedCheckOptionPrompt.takeUnretainedValue(): true] as CFDictionary)
             NSLog("pomvox-engine: arm() begin — AX trusted=%@", axTrusted ? "yes" : "no")
         } else {
-            guard Permissions.allGranted() else {
+            guard permissionsGranted() else {
                 NSLog("pomvox-engine: auto-arm skipped — permissions missing")
                 pidfile.release()
                 status = .failed("Permissions needed — open Setup to finish enabling Pomvox.")
@@ -314,7 +329,7 @@ final class NativeEngine: ObservableObject {
         // fresh-install "app is dead" report). startCapture() gates on .ready.
         let tap = makeTap()
         do {
-            try tap.start()
+            try startTap(tap)
             NSLog("pomvox-engine: event tap installed")
         } catch {
             NSLog("pomvox-engine: event tap FAILED (Input Monitoring?): %@", String(describing: error))
@@ -952,6 +967,7 @@ final class NativeEngine: ObservableObject {
         }
         machineLock.lock(); machine = m; machineLock.unlock()
         pttDisplayName = HotkeyMachine.displayName(fellBack ? "fn" : pttName)
+        pttIsMouseButton = m.pttIsMouseButton
         NSLog("pomvox-engine: hotkeys — ptt=%@", pttDisplayName)
 
         let hudEnabled = doc.bool("hud", "enabled") ?? true
@@ -1793,7 +1809,7 @@ final class NativeEngine: ObservableObject {
         tap?.stop()
         let fresh = makeTap()
         do {
-            try fresh.start()
+            try startTap(fresh)
             tap = fresh
             NSLog("pomvox-engine: wake — event tap recreated")
         } catch {

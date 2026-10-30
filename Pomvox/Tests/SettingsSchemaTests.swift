@@ -100,6 +100,58 @@ final class SettingsSchemaTests: XCTestCase {
         }
     }
 
+    // MARK: hands-free from a side button (#196)
+
+    /// A side-button PTT needs a side-button toggle to go hands-free; the
+    /// picker offers both so nobody has to hand-edit config.toml.
+    func testTogglePresetsOfferTheSideMouseButtonCombos() {
+        XCTAssertEqual(SettingsSchema.togglePresets.first, "fn+space")
+        XCTAssertEqual(SettingsSchema.togglePresets.suffix(2), ["mouse4+space", "mouse5+space"])
+        XCTAssertEqual(SettingsSchema.keyLabel("mouse4+space"), "mouse button 4+space")
+        XCTAssertEqual(SettingsSchema.keyLabel("right_option+space"), "right option+space")
+        XCTAssertEqual(SettingsSchema.keyLabel("fn+space"), "fn+space")
+        // Every preset must be a toggle the engine accepts with its matching
+        // PTT, or the picker would offer a value that falls back to Fn.
+        for t in SettingsSchema.togglePresets {
+            let mod = String(t.split(separator: "+")[0])
+            XCTAssertNoThrow(try HotkeyMachine(ptt: mod, toggle: t), t)
+            XCTAssertTrue(SettingsSchema.hotkeyConflicts(
+                HotkeyChoice(ptt: mod, toggle: t, stop: "", cancel: "esc")).isEmpty, t)
+        }
+    }
+
+    /// The picker keeps a value the file already had, so a hand-edited combo
+    /// such as `right_command+space` is never silently replaced.
+    func testPickerPreservesAHandEditedValue() {
+        let presets = SettingsSchema.togglePresets
+        XCTAssertEqual(SettingsSchema.pickerOptions(presets: presets, selection: "mouse4+space"),
+                       presets)
+        XCTAssertEqual(SettingsSchema.pickerOptions(presets: presets, selection: "right_command+space"),
+                       ["right_command+space"] + presets)
+    }
+
+    /// The conflict warning stays accurate for a mouse PTT and now says
+    /// what to do: pick the matching side-button toggle.
+    func testToggleModifierDifferentFromMousePTTSuggestsTheMouseToggle() {
+        let c = HotkeyChoice(ptt: "mouse4", toggle: "fn+space", stop: "", cancel: "esc")
+        let warnings = SettingsSchema.hotkeyConflicts(c)
+        XCTAssertEqual(warnings.count, 1)
+        XCTAssertTrue(warnings[0].contains("Toggle uses fn but push-to-talk is mouse button 4"),
+                      warnings[0])
+        XCTAssertTrue(warnings[0].contains("mouse button 4+space"), warnings[0])
+        let c5 = HotkeyChoice(ptt: "mouse5", toggle: "fn+space", stop: "", cancel: "esc")
+        XCTAssertTrue(SettingsSchema.hotkeyConflicts(c5)[0].contains("mouse button 5+space"))
+    }
+
+    /// Only a toggle the picker offers is suggested; a PTT with no matching
+    /// preset keeps the plain warning rather than inventing a combo.
+    func testNoSuggestionWhenNoMatchingTogglePresetExists() {
+        let c = HotkeyChoice(ptt: "right_command", toggle: "fn+space", stop: "", cancel: "esc")
+        let warnings = SettingsSchema.hotkeyConflicts(c)
+        XCTAssertEqual(warnings.count, 1)
+        XCTAssertFalse(warnings[0].contains("Try"), warnings[0])
+    }
+
     // MARK: cleanup model presets
 
     func testTheDefaultCleanupModelIsOfferedAsAPreset() {

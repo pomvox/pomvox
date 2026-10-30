@@ -148,6 +148,35 @@ final class OnboardingLogicTests: XCTestCase {
         XCTAssertEqual(row.note, "")
     }
 
+    // MARK: - Hotkey heartbeat copy (#196: a mouse PTT is not a keyboard key)
+
+    /// With Fn (or any keyboard key) the hint explains the hardware-Fn
+    /// silent world and names "key"; a side button gets button wording and
+    /// the mouse-specific failure (a driver or utility owning the button).
+    func testHeartbeatCopyMatchesTheKindOfPtt() {
+        let key = OnboardingFlow.heartbeatHint(pttIsMouseButton: false)
+        XCTAssertTrue(key.contains("Some keyboards handle this key in hardware"), key)
+        XCTAssertFalse(key.lowercased().contains("mouse"), key)
+
+        let mouse = OnboardingFlow.heartbeatHint(pttIsMouseButton: true)
+        XCTAssertFalse(mouse.lowercased().contains("keyboard"), mouse)
+        XCTAssertFalse(mouse.contains("this key"), mouse)
+        XCTAssertTrue(mouse.lowercased().contains("button"), mouse)
+        // Both keep the two recovery steps: pick another binding, relaunch
+        // after an Input Monitoring grant.
+        for hint in [key, mouse] {
+            XCTAssertTrue(hint.contains("Settings ▸ Hotkeys"), hint)
+            XCTAssertTrue(hint.contains("Relaunch Pomvox"), hint)
+        }
+    }
+
+    func testHeartbeatPromptNamesAKeyOrAButton() {
+        XCTAssertEqual(OnboardingFlow.heartbeatPrompt(pttName: "Fn (🌐)", pttIsMouseButton: false),
+                       "Press Fn (🌐) to test your dictation key")
+        XCTAssertEqual(OnboardingFlow.heartbeatPrompt(pttName: "Mouse Button 4", pttIsMouseButton: true),
+                       "Press Mouse Button 4 to test your dictation button")
+    }
+
     /// The other two rows never carry Input Monitoring advice.
     func testOtherRowsAreUnaffected() {
         var statuses = allGranted
