@@ -240,6 +240,16 @@ final class TelemetryTests: XCTestCase {
                        "no file-path-shaped content may reach the wire")
     }
 
+    // MARK: - test runs never reach production
+
+    func testSharedClientIsInertUnderXCTest() async {
+        XCTAssertTrue(TelemetryClient.isRunningUnderXCTest)
+        let endpoint = await TelemetryClient.shared.endpoint
+        XCTAssertNil(endpoint, "a hosted test run must have no route to the production endpoint")
+        let isEnabled = await TelemetryClient.shared.isEnabled
+        XCTAssertFalse(isEnabled(), "a hosted test run must not queue events, whatever the consent")
+    }
+
     // MARK: - bounded queue + 50-event chunking
 
     private func ev(_ ts: Int) -> TelemetryEvent { TelemetryEvent(event: .appLaunch, ts: ts) }

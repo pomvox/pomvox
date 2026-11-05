@@ -379,8 +379,8 @@ actor TelemetryClient {
     static let productionEndpoint = URL(string: "https://murmur-ingest-w5tvsus5ia-uc.a.run.app")
 
     private var queue: TelemetryQueue
-    private let endpoint: URL?
-    private let isEnabled: @Sendable () -> Bool
+    let endpoint: URL?
+    let isEnabled: @Sendable () -> Bool
     private let env: TelemetryEnv
     private let now: @Sendable () -> Int
     private let sender: Sender
@@ -408,16 +408,25 @@ actor TelemetryClient {
         self.persist = persist
     }
 
+    /// True when XCTest is loaded into this process. The test bundle runs hosted
+    /// inside Pomvox.app, so tests that exercise real stores reach `shared`; a CI
+    /// runner has empty defaults (consent defaults to granted, and a new install
+    /// id each run), which made every test run look like a new install. The
+    /// shipped app never loads XCTest.
+    static let isRunningUnderXCTest = NSClassFromString("XCTestCase") != nil
+
     /// The process-wide client. Reads consent fresh from UserDefaults on every
-    /// flush, so turning the toggle off stops sending immediately.
+    /// flush, so turning the toggle off stops sending immediately. Inert under
+    /// XCTest: no endpoint, and nothing queued.
     static let shared: TelemetryClient = {
+        let underXCTest = isRunningUnderXCTest
         var store = TelemetryStore()
         let id = store.installID()
         let queueStore = TelemetryQueueStore()
         let appVersion = TelemetryEnvBuilder.appVersion()
         return TelemetryClient(
-            endpoint: productionEndpoint,
-            enabled: { TelemetryStore().maySend },
+            endpoint: underXCTest ? nil : productionEndpoint,
+            enabled: { !underXCTest && TelemetryStore().maySend },
             env: TelemetryEnvBuilder.current(installID: id),
             now: { Int(Date().timeIntervalSince1970 * 1000) },
             sender: TelemetryClient.urlSessionSender,
