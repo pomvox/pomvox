@@ -7,6 +7,11 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 
 ## [Unreleased]
 
+### Fixed
+
+- **Test runs no longer send usage stats.** The test suite runs inside the app,
+  so each CI run reported as a new install. The shipped app is unaffected.
+
 ## [0.2.10] — 2026-10-30
 
 ### Added
