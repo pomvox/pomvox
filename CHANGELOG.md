@@ -7,6 +7,15 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 
 ## [Unreleased]
 
+### Added
+
+- **Experimental, off by default: insert text through Accessibility instead of
+  the clipboard.** Opt in with
+  `defaults write app.pomvox.hub PomvoxAXInsert -bool YES` (or
+  `POMVOX_AX_INSERT=1`). Pomvox reads the field back after inserting; if the
+  text isn't there it pastes as usual, so no words are lost. Password fields
+  always use the normal paste. Nothing changes unless you opt in. (#225)
+
 ### Fixed
 
 - **Test runs no longer send usage stats.** The test suite runs inside the app,
