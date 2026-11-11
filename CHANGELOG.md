@@ -7,6 +7,8 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 
 ## [Unreleased]
 
+## [0.2.11] — 2026-11-10
+
 ### Added
 
 - **Pomvox suggests Dictionary words from your History fixes.** Fix the same
@@ -771,7 +773,8 @@ on Apple Silicon, shipping as a signed, notarized `Pomvox.dmg`.
 - **Python reference engine** (`src/pomvox/`) — the original app, now frozen as a
   runnable reference whose pure-logic modules are the cross-checked test spec.
 
-[Unreleased]: https://github.com/pomvox/pomvox/compare/v0.2.10...HEAD
+[Unreleased]: https://github.com/pomvox/pomvox/compare/v0.2.11...HEAD
+[0.2.11]: https://github.com/pomvox/pomvox/compare/v0.2.10...v0.2.11
 [0.2.10]: https://github.com/pomvox/pomvox/compare/v0.2.9...v0.2.10
 [0.2.9]: https://github.com/pomvox/pomvox/compare/v0.2.8...v0.2.9
 [0.2.8]: https://github.com/pomvox/pomvox/compare/v0.2.7...v0.2.8
