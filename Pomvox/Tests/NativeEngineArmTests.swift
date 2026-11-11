@@ -87,4 +87,69 @@ final class NativeEngineArmTests: XCTestCase {
         XCTAssertEqual(e.pttDisplayName, HotkeyMachine.displayName("fn"))
         XCTAssertEqual(e.toggleDisplayName, HotkeyMachine.comboDisplayName("fn+space"))
     }
+
+    // MARK: - input_monitoring_denied, once per launch (#221)
+
+    private func countingEngine(tapWorks: @escaping () -> Bool,
+                                emitted: @escaping (String) -> Void) throws -> NativeEngine {
+        let path = dir.appendingPathComponent("config.toml").path
+        try "[cleanup]\nenabled = false\n".write(toFile: path, atomically: true, encoding: .utf8)
+        return NativeEngine(
+            configPath: path,
+            pidfile: Pidfile(url: dir.appendingPathComponent("engine.pid")),
+            permissionsGranted: { true },
+            startTap: { _ in if !tapWorks() { throw EventTapError.notPermitted } },
+            emitError: emitted)
+    }
+
+    /// Every arm attempt without the grant meets the tap failure; only the
+    /// first is reported. Status text and lock release stay as before.
+    func testInputMonitoringDeniedReportedOncePerLaunch() async throws {
+        var codes: [String] = []
+        let e = try countingEngine(tapWorks: { false }, emitted: { codes.append($0) })
+        for _ in 0..<3 {
+            await e.arm(interactive: false)
+            XCTAssertFalse(e.isArmed)
+            XCTAssertFalse(e.tapInstalled)
+            XCTAssertEqual(e.status, .failed(
+                "Input Monitoring isn't granted. Enable Pomvox in System Settings ▸ Privacy & "
+                + "Security ▸ Input Monitoring, then turn this on again."))
+            XCTAssertFalse(FileManager.default.fileExists(
+                atPath: dir.appendingPathComponent("engine.pid").path))
+        }
+        XCTAssertEqual(codes, ["input_monitoring_denied"])
+    }
+
+    /// Each engine (one per process) starts with its own latch: a fresh
+    /// launch reports the denial again.
+    func testInputMonitoringDeniedReportedAgainOnNextLaunch() async throws {
+        var codes: [String] = []
+        let first = try countingEngine(tapWorks: { false }, emitted: { codes.append($0) })
+        await first.arm(interactive: false)
+        await first.arm(interactive: false)
+        let second = try countingEngine(tapWorks: { false }, emitted: { codes.append($0) })
+        await second.arm(interactive: false)
+        XCTAssertEqual(codes, ["input_monitoring_denied", "input_monitoring_denied"])
+    }
+}
+
+/// The latch arm() uses: a successful tap install clears it, so a revoke after
+/// a working arm is reported again. Driven directly because the arm that
+/// installs a tap goes on to load (and maybe download) the speech model.
+final class ReportLatchTests: XCTestCase {
+    func testReportsOnceUntilCleared() {
+        var latch = ReportLatch()
+        XCTAssertTrue(latch.shouldReport())
+        XCTAssertFalse(latch.shouldReport())
+        XCTAssertFalse(latch.shouldReport())
+        latch.clear()   // tap installed
+        XCTAssertTrue(latch.shouldReport())   // revoked later: reported again
+        XCTAssertFalse(latch.shouldReport())
+    }
+
+    func testClearBeforeAnyReportIsHarmless() {
+        var latch = ReportLatch()
+        latch.clear()
+        XCTAssertTrue(latch.shouldReport())
+    }
 }

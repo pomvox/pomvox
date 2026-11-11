@@ -93,6 +93,12 @@ final class NativeEngine: ObservableObject {
     private let pidfile: Pidfile
     private let permissionsGranted: () -> Bool
     private let startTap: (EventTap) throws -> Void
+    /// Sends an `.error` event with the given code. Injected so a test can
+    /// count what arm() reports (default: the real telemetry client).
+    private let emitError: (String) -> Void
+    /// `input_monitoring_denied` is reported once per launch, not per arm
+    /// attempt (#221); cleared when a tap installs (see ReportLatch).
+    private var inputMonitoringDenied = ReportLatch()
     private let capture = AudioCapture()
     private let transcriber = Transcriber()
     private let cleanup = CleanupEngine()
@@ -240,11 +246,15 @@ final class NativeEngine: ObservableObject {
     init(configPath: String = SettingsModel.defaultPath(),
          pidfile: Pidfile = Pidfile(),
          permissionsGranted: @escaping () -> Bool = Permissions.allGranted,
-         startTap: @escaping (EventTap) throws -> Void = { try $0.start() }) {
+         startTap: @escaping (EventTap) throws -> Void = { try $0.start() },
+         emitError: @escaping (String) -> Void = {
+             TelemetryClient.shared.emit(.error, props: .error($0))
+         }) {
         self.configPath = configPath
         self.pidfile = pidfile
         self.permissionsGranted = permissionsGranted
         self.startTap = startTap
+        self.emitError = emitError
         self.machine = try! HotkeyMachine()  // fixed Fn push-to-talk bindings
         let hud = HudController()
         self.hud = hud
@@ -341,10 +351,13 @@ final class NativeEngine: ObservableObject {
             status = .failed(
                 "Input Monitoring isn't granted. Enable Pomvox in System Settings ▸ Privacy & "
                 + "Security ▸ Input Monitoring, then turn this on again.")
-            TelemetryClient.shared.emit(.error, props: errorProps("input_monitoring_denied"))
+            if inputMonitoringDenied.shouldReport() {
+                emitError("input_monitoring_denied")
+            }
             return
         }
         self.tap = tap
+        inputMonitoringDenied.clear()
         // A brand-new tap owes nothing to wakes that predate it (and a stale
         // flag from a failed prior arm must not trigger a spurious recreate).
         pendingTapRecreate = false
