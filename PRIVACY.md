@@ -82,7 +82,9 @@ Each POST is JSON with:
   `props`
 
 `event` is one of: `app_launch`, `dictation_completed`, `cleanup_used`,
-`cold_start`, `error`, `setting_changed`, `dictionary_edited`.
+`cold_start`, `error`, `setting_changed`, `dictionary_edited`,
+`permission_denied` (a macOS permission such as Input Monitoring is not
+granted; it carries only which one, as `error_code`).
 
 `props` can only hold these fields (and only some events set them):
 

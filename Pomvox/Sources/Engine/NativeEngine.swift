@@ -93,9 +93,10 @@ final class NativeEngine: ObservableObject {
     private let pidfile: Pidfile
     private let permissionsGranted: () -> Bool
     private let startTap: (EventTap) throws -> Void
-    /// Sends an `.error` event with the given code. Injected so a test can
-    /// count what arm() reports (default: the real telemetry client).
-    private let emitError: (String) -> Void
+    /// Sends a `permission_denied` event with the given code (#221: a missing
+    /// permission is a state, not an error). Injected so a test can count what
+    /// arm() reports (default: the real telemetry client).
+    private let reportPermissionDenied: (String) -> Void
     /// `input_monitoring_denied` is reported once per launch, not per arm
     /// attempt (#221); cleared when a tap installs (see ReportLatch).
     private var inputMonitoringDenied = ReportLatch()
@@ -247,14 +248,14 @@ final class NativeEngine: ObservableObject {
          pidfile: Pidfile = Pidfile(),
          permissionsGranted: @escaping () -> Bool = Permissions.allGranted,
          startTap: @escaping (EventTap) throws -> Void = { try $0.start() },
-         emitError: @escaping (String) -> Void = {
-             TelemetryClient.shared.emit(.error, props: .error($0))
+         reportPermissionDenied: @escaping (String) -> Void = {
+             TelemetryClient.shared.emit(.permissionDenied, props: .permission($0))
          }) {
         self.configPath = configPath
         self.pidfile = pidfile
         self.permissionsGranted = permissionsGranted
         self.startTap = startTap
-        self.emitError = emitError
+        self.reportPermissionDenied = reportPermissionDenied
         self.machine = try! HotkeyMachine()  // fixed Fn push-to-talk bindings
         let hud = HudController()
         self.hud = hud
@@ -352,7 +353,7 @@ final class NativeEngine: ObservableObject {
                 "Input Monitoring isn't granted. Enable Pomvox in System Settings ▸ Privacy & "
                 + "Security ▸ Input Monitoring, then turn this on again.")
             if inputMonitoringDenied.shouldReport() {
-                emitError("input_monitoring_denied")
+                reportPermissionDenied("input_monitoring_denied")
             }
             return
         }
