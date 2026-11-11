@@ -9,6 +9,11 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 
 ### Added
 
+- **Pomvox suggests Dictionary words from your History fixes.** Fix the same
+  word three times with History's *Fix a misheard word…* and a strip on the
+  History and Dictionary pages offers to add it to your Words. Nothing is
+  added until you click *Add*; *Dismiss* hides that word for good. It is worked
+  out on your Mac from your own dictionary file, and nothing is sent anywhere. (#227)
 - **Experimental, off by default: insert text through Accessibility instead of
   the clipboard.** Opt in with
   `defaults write app.pomvox.hub PomvoxAXInsert -bool YES` (or

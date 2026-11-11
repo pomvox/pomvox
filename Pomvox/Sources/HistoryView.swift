@@ -15,6 +15,7 @@ struct HistoryView: View {
                 SearchField(text: $query)
             }
             if reinserter.phase != .idle { ReinsertBanner() }
+            DictionarySuggestionBanner()
             metaBar
             ScrollView {
                 LazyVStack(spacing: 0) {
