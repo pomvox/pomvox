@@ -71,6 +71,11 @@ enum TelemetryEventName: String, Codable, Sendable {
     case error
     case settingChanged = "setting_changed"
     case dictionaryEdited = "dictionary_edited"
+    /// A missing macOS permission (#221): a state the user can fix, not a fault,
+    /// so it stays out of the error rate. Carries only `errorCode` (enum-shaped,
+    /// e.g. `input_monitoring_denied`). The ingest allowlist must accept it
+    /// before a release sends it (murmur-telemetry validator, schema v2).
+    case permissionDenied = "permission_denied"
 }
 
 /// The complete set of properties an event may carry. There is deliberately no
@@ -101,6 +106,10 @@ extension TelemetryProps {
     static func error(_ code: String) -> TelemetryProps {
         var p = TelemetryProps(); p.errorCode = code; return p
     }
+
+    /// `permission_denied` props: which permission, in the same enum-shaped
+    /// `error_code` field (no new prop, so no new way to carry content).
+    static func permission(_ code: String) -> TelemetryProps { .error(code) }
 }
 
 struct TelemetryEvent: Equatable, Codable, Sendable {

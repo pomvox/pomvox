@@ -99,7 +99,7 @@ final class NativeEngineArmTests: XCTestCase {
             pidfile: Pidfile(url: dir.appendingPathComponent("engine.pid")),
             permissionsGranted: { true },
             startTap: { _ in if !tapWorks() { throw EventTapError.notPermitted } },
-            emitError: emitted)
+            reportPermissionDenied: emitted)
     }
 
     /// Every arm attempt without the grant meets the tap failure; only the

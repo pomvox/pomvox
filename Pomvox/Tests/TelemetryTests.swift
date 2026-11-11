@@ -221,6 +221,19 @@ final class TelemetryTests: XCTestCase {
         XCTAssertEqual(Set(events[0].keys), ["event", "ts"], "no props on this event")
     }
 
+    func testPermissionDeniedEventCarriesOnlyTheCode() throws {
+        // #221: a missing permission is reported as a state, not an `error`,
+        // and carries nothing but the enum-shaped code.
+        let ev = TelemetryEvent(event: .permissionDenied, ts: 1_730_000_005_000,
+                                props: .permission("input_monitoring_denied"))
+        let data = try TelemetryEncoder.encodeBatch(env: env, events: [ev])
+        let events = decode(data)["events"] as! [[String: Any]]
+        XCTAssertEqual(events[0]["event"] as? String, "permission_denied")
+        let p = events[0]["props"] as! [String: Any]
+        XCTAssertEqual(Set(p.keys), ["error_code"])
+        XCTAssertEqual(p["error_code"] as? String, "input_monitoring_denied")
+    }
+
     func testColdStartDurationsAreClampedToContractRange() {
         var props = TelemetryProps()
         props.coremlCompileMs = -5

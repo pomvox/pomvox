@@ -27,8 +27,10 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
   used to send an `input_monitoring_denied` error on every attempt to turn
   dictation on, so a few Macs still waiting for the grant made the error
   rate look high. It is now sent once per launch, and again only after
-  a working start, so a later revoke still shows up. What you see in the
-  app is unchanged. (#221)
+  a working start, so a later revoke still shows up. It is also no longer
+  counted as an error: it goes out as a `permission_denied` event (listed in
+  PRIVACY.md) that carries only which permission is missing. What you see in
+  the app is unchanged. (#221)
 - **Test runs no longer send usage stats.** The test suite runs inside the app,
   so each CI run reported as a new install. The shipped app is unaffected.
 
