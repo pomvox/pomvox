@@ -20,6 +20,7 @@ struct DictionaryView: View {
             }
             if let err = store.parseError { parseErrorBanner(err) }
             if !store.featureEnabled { disabledBanner }
+            DictionarySuggestionBanner()
             ScrollView {
                 VStack(alignment: .leading, spacing: 28) {
                     wordsSection
