@@ -5,6 +5,7 @@ import Foundation
 /// What `paste` did with the transcript.
 enum PasteOutcome: Equatable {
     case pasted             // editable field reported focus; ⌘V posted, not OS-acknowledged
+                            // (or the opt-in AX insert was read back verified, #225)
     case copiedToClipboard  // no event posted — left on the clipboard for recovery
     case pasteUnverified    // best-effort event posted; keep text, but avoid encouraging a duplicate
 }
@@ -138,6 +139,7 @@ enum Paster {
     static func paste(_ text: String, request: Request) -> PasteOutcome {
         perform(text, request: request, to: .general,
                 focusedAcceptsText: focusedElementAcceptsText(),
+                axInsert: AXInsert.isEnabled ? { AXInsert.insertIntoFocused(text) } : nil,
                 synthesizePaste: { synthesizeCommandV() },
                 schedule: { delay, body in
                     DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: body)
@@ -146,9 +148,13 @@ enum Paster {
 
     /// All production clipboard writes, including copy-only recovery, go through
     /// an acquired request. Ownership transfers to the terminal restore callback.
+    /// `axInsert` (opt-in prototype, #225; nil by default) runs first on a
+    /// current target; only a read-back-verified `.inserted` skips the paste,
+    /// and then the clipboard is never touched.
     @discardableResult
     static func perform(_ text: String, request: Request, to pb: NSPasteboard,
                         focusedAcceptsText: Bool, copyOnly: Bool = false,
+                        axInsert: (() -> AXInsertResult)? = nil,
                         synthesizePaste: () -> Void,
                         schedule: @escaping (Double, @escaping () -> Void) -> Void) -> PasteOutcome {
         let lease = request.takeLease()
@@ -156,6 +162,10 @@ enum Paster {
             stage(pb, text)
             lease.release()
             return .copiedToClipboard
+        }
+        if let axInsert, axInsert() == .inserted {
+            lease.release()
+            return .pasted
         }
         return deliver(text, to: pb, focusedAcceptsText: focusedAcceptsText,
                        synthesizePaste: synthesizePaste, schedule: schedule,

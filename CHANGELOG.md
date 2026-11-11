@@ -14,6 +14,12 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
   History and Dictionary pages offers to add it to your Words. Nothing is
   added until you click *Add*; *Dismiss* hides that word for good. It is worked
   out on your Mac from your own dictionary file, and nothing is sent anywhere. (#227)
+- **Experimental, off by default: insert text through Accessibility instead of
+  the clipboard.** Opt in with
+  `defaults write app.pomvox.hub PomvoxAXInsert -bool YES` (or
+  `POMVOX_AX_INSERT=1`). Pomvox reads the field back after inserting; if the
+  text isn't there it pastes as usual, so no words are lost. Password fields
+  always use the normal paste. Nothing changes unless you opt in. (#225)
 
 ### Fixed
 
