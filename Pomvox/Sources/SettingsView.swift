@@ -673,13 +673,13 @@ private struct PrivacyPane: View {
                     }
                 }
             }
-            SettingsGroup("Evaluation capture") {
-                SettingRow(title: "Save transcription pairs for evaluation",
-                           desc: "Writes one JSON file per dictation — the raw transcript, the cleaned text, and which models ran. Text only, never audio. Stays in ~/.pomvox/eval and never leaves this Mac.") {
-                    SettingToggle(isOn: evalCapture.binding, label: "Save transcription pairs for evaluation")
+            SettingsGroup("Help improve cleanup") {
+                SettingRow(title: "Contribute cleanup examples",
+                           desc: "Off by default. Saves transcript pairs only — the raw text and the cleaned text (plus which models ran) — never audio. Stays in ~/.pomvox/eval on this Mac and never leaves it. Delete anytime below.") {
+                    SettingToggle(isOn: evalCapture.binding, label: "Contribute cleanup examples")
                 }
                 RowDivider()
-                SettingRow(title: "Captured pairs", desc: evalCapture.summary) {
+                SettingRow(title: "Contributed examples", desc: evalCapture.summary) {
                     HStack(spacing: 8) {
                         Button { evalCapture.revealInFinder() } label: {
                             Text("Show in Finder").font(Typo.ui(12.5, .semibold)).foregroundStyle(Palette.ink)
@@ -688,7 +688,7 @@ private struct PrivacyPane: View {
                                 .overlay(Capsule().stroke(Palette.hair, lineWidth: 0.5))
                         }
                         .buttonStyle(.plain)
-                        .accessibilityLabel("Show captured pairs in Finder")
+                        .accessibilityLabel("Show contributed cleanup examples in Finder")
                         Button(role: .destructive) { confirmingEvalPurge = true } label: {
                             Text("Delete…").font(Typo.ui(12.5, .semibold)).foregroundStyle(.white)
                                 .padding(.horizontal, 14).padding(.vertical, 6)
@@ -696,15 +696,15 @@ private struct PrivacyPane: View {
                         }
                         .buttonStyle(.plain)
                         .disabled(evalCapture.count == 0)
-                        .accessibilityLabel("Delete all captured pairs")
-                        .confirmationDialog("Delete all captured pairs?",
+                        .accessibilityLabel("Delete all contributed cleanup examples")
+                        .confirmationDialog("Delete all contributed cleanup examples?",
                                             isPresented: $confirmingEvalPurge, titleVisibility: .visible) {
-                            Button("Delete Captured Pairs", role: .destructive) {
+                            Button("Delete Contributed Examples", role: .destructive) {
                                 evalCapture.purge(); storage = StorageInspector.scan()
                             }
                             Button("Cancel", role: .cancel) {}
                         } message: {
-                            Text("Every captured transcript pair in ~/.pomvox/eval is removed. History is untouched. This can't be undone.")
+                            Text("Every contributed cleanup example in ~/.pomvox/eval is removed. History is untouched. This can't be undone.")
                         }
                     }
                 }

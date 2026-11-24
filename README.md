@@ -221,11 +221,11 @@ talks to Hugging Face if the weights are not already cached.
 
 The full privacy policy is in [PRIVACY.md](PRIVACY.md).
 
-One more opt-in, also off by default: **Settings → Privacy → Save transcription
-pairs for evaluation** writes each dictation's raw transcript and cleaned text
-(never audio) as a JSON file in `~/.pomvox/eval`, for building an eval set from
-your own speech. It stays on this Mac — the menu bar shows it's on, and the
-Privacy pane opens or deletes the folder in one click.
+One more opt-in, also off by default: **Settings → Privacy → Contribute cleanup
+examples** writes each dictation's raw transcript and cleaned text (never audio)
+as a JSON file in `~/.pomvox/eval`, so you can help improve cleanup from your
+own speech. It stays on this Mac — the menu bar shows it's on, and the Privacy
+pane opens or deletes the folder in one click.
 
 ## Two engines
 

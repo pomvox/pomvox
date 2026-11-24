@@ -30,16 +30,16 @@ final class StorageInspectorTests: XCTestCase {
         XCTAssertTrue(labels.contains("Dictation history"))
         XCTAssertTrue(labels.contains("Settings"))
         XCTAssertTrue(labels.contains("Downloaded models"))
-        XCTAssertTrue(labels.contains("Evaluation pairs"))
+        XCTAssertTrue(labels.contains("Cleanup examples"))
 
         // History size counts the WAL siblings so the number isn't misleadingly low.
         let history = items.first { $0.label == "Dictation history" }!
         XCTAssertEqual(history.paths, ["/x/history.db", "/x/history.db-wal", "/x/history.db-shm"])
         // Models are flagged a directory (recursive size) and not wiped.
         XCTAssertTrue(items.first { $0.label == "Downloaded models" }!.isDir)
-        // The opt-in eval folder is listed so "what's stored" stays honest, and
-        // sized as a directory (one file per dictation).
-        let eval = items.first { $0.label == "Evaluation pairs" }!
+        // The opt-in cleanup-examples folder is listed so "what's stored" stays
+        // honest, and sized as a directory (one file per dictation).
+        let eval = items.first { $0.label == "Cleanup examples" }!
         XCTAssertEqual(eval.primary, "/x/eval")
         XCTAssertTrue(eval.isDir)
     }

@@ -43,8 +43,8 @@ enum StorageInspector {
              "Your config.toml — edited right here in Settings.", false),
             ("Downloaded models", modelsDir, [modelsDir],
              "Speech + cleanup models. Re-downloadable, so a wipe leaves them.", true),
-            ("Evaluation pairs", evalDir, [evalDir],
-             "Raw + cleaned text pairs, only while capture is on. Never audio.", true),
+            ("Cleanup examples", evalDir, [evalDir],
+             "Raw + cleaned text pairs, only while Contribute cleanup examples is on. Never audio.", true),
         ]
     }
 

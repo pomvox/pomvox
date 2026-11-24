@@ -7,6 +7,13 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 
 ## [Unreleased]
 
+### Changed
+
+- **Settings → Privacy → Help improve cleanup.** The opt-in that saves raw and
+  cleaned transcript pairs (never audio) on this Mac is now framed as
+  *Contribute cleanup examples*, with matching menu-bar copy. Capture path and
+  `~/.pomvox/eval` format are unchanged.
+
 ## [0.2.11] — 2026-11-10
 
 ### Added
